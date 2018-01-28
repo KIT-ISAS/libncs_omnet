@@ -1,0 +1,46 @@
+<features cppSourceRoots="src">
+    <feature
+        id="TCP_common"
+        name="TCP Common"
+        description = "The common part of TCP implementations"
+        initiallyEnabled = "true"
+        requires = ""
+        labels = ""
+        nedPackages = ""
+        extraSourceFolders = ""
+        compileFlags = "-DWITH_TCP_COMMON"
+        linkerFlags = ""
+        />
+    <feature
+        id="TCP_NSC"
+        name="TCP (NSC)"
+        description = "TCP module based on Sam Jensen's Network Simulation Cradle
+                       (NSC, http://www.wand.net.nz/~stj2/nsc) that wraps real
+                       OS stacks: Linux, FreeBSD, OpenBSD and lwIP.
+                       NSC must be downloaded and installed separately; read
+                       inet/3rdparty/README for more information."
+        initiallyEnabled = "false"
+        requires = "TCP_common"
+        labels = ""
+        nedPackages = ""
+        extraSourceFolders = ""
+        compileFlags = "-DHAVE_NSC -DWITH_TCP_NSC"
+        linkerFlags = ""
+        />
+    <feature
+        id="TCP_NSC_Sysctl"
+        name="TCP (NSC_Sysctl)"
+        description = "Sysctl support for TCP_NSC"
+        initiallyEnabled = "false"
+        requires = "
+                   TCP_NSC
+                   "
+        labels = ""
+        nedPackages = "
+                       libncs_omnet.NSC
+                      "
+        extraSourceFolders = ""
+        compileFlags = "-DWITH_TCP_NSC_SYSCTL"
+        linkerFlags = ""
+        />
+</features>

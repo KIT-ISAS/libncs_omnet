@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<featurestates>
+    <feature enabled="true" id="TCP_common"/>
+    <feature enabled="true" id="TCP_NSC"/>
+    <feature enabled="true" id="TCP_NSC_Sysctl"/>
+</featurestates>

@@ -1,0 +1,4 @@
+#!/bin/sh
+cd `dirname $0`
+../src/libncs_omnet -n .:../src $*
+# for shared lib, use: opp_run -l ../src/libncs_omnet -n .:../src $*
