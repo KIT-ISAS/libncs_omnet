@@ -47,6 +47,9 @@ void NcsContext::initialize(const int stage) {
         startupDelay = par("startupDelay").doubleValue();
 
         // setup signals for statistics recording
+        scSentSignal = registerSignal("sc_sent");
+        caSentSignal = registerSignal("ca_sent");
+        acSentSignal = registerSignal("ac_sent");
         qocSignal = registerSignal("act_qoc");
         scObservedDelaySignal = registerSignal("sc_delay_obs");
         caObservedDelaySignal = registerSignal("ca_delay_obs");
@@ -155,6 +158,9 @@ void NcsContext::handleMessage(cMessage * const msg) {
             sendNcsPktList(mw_ncsPktList);
 
             // signal updated statistical data
+            emit(scSentSignal, static_cast<bool>(mw_ncsStats("sc_sent", 1, 1)));
+            emit(caSentSignal, static_cast<bool>(mw_ncsStats("ca_sent", 1, 1)));
+            emit(acSentSignal, static_cast<bool>(mw_ncsStats("ac_sent", 1, 1)));
             emit(qocSignal, static_cast<double>(mw_ncsStats("actual_qoc", 1, 1)));
 
             mwArray mw_scDelays = mw_ncsStats("sc_delays", 1, 1);

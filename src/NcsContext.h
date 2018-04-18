@@ -116,6 +116,9 @@ class NcsContext : public cSimpleModule {
     L3Address cpsAddr[NCTXCI_COUNT];
 
     // statistical data
+    simsignal_t scSentSignal;
+    simsignal_t caSentSignal;
+    simsignal_t acSentSignal;
     simsignal_t qocSignal;
     simsignal_t scObservedDelaySignal;
     simsignal_t caObservedDelaySignal;

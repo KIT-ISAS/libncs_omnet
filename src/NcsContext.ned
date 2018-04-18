@@ -25,6 +25,9 @@ simple NcsContext like INcsContext
     parameters:
         @display("i=block/cogwheel");
         
+        @signal[sc_sent](type="bool");
+        @signal[ca_sent](type="bool");
+        @signal[ac_sent](type="bool");
         @signal[act_qoc](type="double");
         @signal[sc_delay_obs](type="simtime_t"); // CPS-CPS (time of processing)
         @signal[ca_delay_obs](type="simtime_t"); // CPS-CPS (time of processing)
@@ -32,6 +35,10 @@ simple NcsContext like INcsContext
         @signal[sc_delay_act](type="simtime_t"); // network (time of reception)
         @signal[ca_delay_act](type="simtime_t"); // network (time of reception)
         @signal[ac_delay_act](type="simtime_t"); // network (time of reception)
+        
+        @statistic[meas_sent](source=sc_sent;title="Measurement Sent";record=stats,vector?;interpolationmode=sample-hold);
+        @statistic[control_seq_sent](source=ca_sent;title="Control Sequence Sent";record=stats,vector?;interpolationmode=sample-hold);
+        @statistic[actuator_ack_sent](source=ac_sent;title="Actuator ACK Sent";record=stats,vector?;interpolationmode=sample-hold);
         @statistic[actual_qoc](source=act_qoc;title="Actual QoC";record=stats,vector?;interpolationmode=sample-hold);
         @statistic[obs_delay_sc](source=sc_delay_obs;title="Observed Sensor-Controller delay";record=stats,histogram?,vector?;interpolationmode=none);
         @statistic[obs_delay_ca](source=ca_delay_obs;title="Observed Controller-Actuator delay";record=stats,histogram?,vector?;interpolationmode=none);
