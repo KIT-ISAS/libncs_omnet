@@ -49,9 +49,11 @@ class NcsContext : public cSimpleModule {
     virtual std::vector<const char *> getConfigFieldNames();
     virtual void setConfigValues(mwArray &cfgStruct);
 
+    void testNonnegBool(std::vector<const char *> &fieldNames, const char * name);
     void testNonnegLong(std::vector<const char *> &fieldNames, const char * name);
     void testNonnegDbl(std::vector<const char *> &fieldNames, const char * name);
     void testNonemptyDblVect(std::vector<const char *> &fieldNames, const char * name);
+    void setNonnegBool(mwArray &cfgStruct, const char * name);
     void setNonnegLong(mwArray &cfgStruct, const char * name);
     void setNonnegDbl(mwArray &cfgStruct, const char * name);
     void setNonemptyDblVect(mwArray &cfgStruct, const char * name);
@@ -120,6 +122,7 @@ class NcsContext : public cSimpleModule {
     simsignal_t caSentSignal;
     simsignal_t acSentSignal;
     simsignal_t qocSignal;
+    simsignal_t stageCostsSignal;
     simsignal_t scObservedDelaySignal;
     simsignal_t caObservedDelaySignal;
     simsignal_t acObservedDelaySignal;

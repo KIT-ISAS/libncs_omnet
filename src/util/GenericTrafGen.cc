@@ -40,10 +40,11 @@ void GenericTrafGen::initialize() {
 
     generateRaw = par("generateRaw");
     numPackets = par("numPackets");
-    startTime = par("startTime");
-    stopTime = par("stopTime");
-    if (stopTime >= SIMTIME_ZERO && stopTime < startTime)
-        throw cRuntimeError("Invalid startTime/stopTime parameters");
+    startTimePar = &par("startTime");
+    stopTimePar = &par("stopTime");
+
+    startTime = startTimePar->doubleValue();
+    stopTime = -1; // updated at startTime
 
     packetLengthPar = &par("packetLength");
     sendIntervalPar = &par("sendInterval");
@@ -103,21 +104,38 @@ bool GenericTrafGen::handleOperationStage(LifecycleOperation *operation, int sta
     return true;
 }
 
-
-
 void GenericTrafGen::scheduleNextPacket(simtime_t previous) {
     simtime_t next;
 
-    if (previous == -1) {
+    if (previous == -1) { // startup
         next = simTime() <= startTime ? startTime : simTime();
         timer->setKind(START);
-    }
-    else {
+    } else { // regular operation
+        if (timer->getKind() == START) {
+            stopTime = stopTimePar->doubleValue();
+            timer->setKind(NEXT);
+        }
+
         next = previous + sendIntervalPar->doubleValue();
-        timer->setKind(NEXT);
     }
-    if (stopTime < SIMTIME_ZERO || next < stopTime)
+
+    // end of burst, prepare for re-triggering
+    if (stopTime >= SIMTIME_ZERO && next >= stopTime) {
+        startTime = startTimePar->doubleValue(); // fetch new startTime
+        stopTime = -1; // ensure the event is scheduled again
+        timer->setKind(START); // causes stopTime to be re-read at next trigger
+
+        // computed time for next packet is outside next sequence time frame?
+        // if yes, re-adjust to beginning of time frame
+        if (startTime > next || (stopTime >= SIMTIME_ZERO && next >= stopTime)) {
+            next = simTime() <= startTime ? startTime : simTime(); // only allow legal startTime values
+        }
+    }
+
+    // schedule next packet
+    if (stopTime < SIMTIME_ZERO || next < stopTime) {
         scheduleAt(next, timer);
+    }
 }
 
 void GenericTrafGen::cancelNextPacket() {

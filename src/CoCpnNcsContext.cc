@@ -25,6 +25,12 @@ const char CoCpnNcsContext::SAMPL_INTERVAL[] = "samplingInterval";
 const char CoCpnNcsContext::SC_DELAY_PROBS[] = "scDelayProbs";
 const char CoCpnNcsContext::CA_DELAY_PROBS[] = "caDelayProbs";
 
+const char CoCpnNcsContext::CTRL_EVT_BASED[] = "controllerEventBased";
+const char CoCpnNcsContext::CTRL_EVT_DEADBAND[] = "controllerDeadband";
+const char CoCpnNcsContext::CTRL_EVT_TRIGGER[] = "controllerEventTrigger";
+const char CoCpnNcsContext::SENSOR_EVT_BASED[] = "sensorEventBased";
+const char CoCpnNcsContext::SENSOR_EVT_DELTA[] = "sensorMeasDelta";
+
 std::vector<const char *> CoCpnNcsContext::getConfigFieldNames() {
     std::vector<const char *> result = NcsContext::getConfigFieldNames();
 
@@ -34,6 +40,12 @@ std::vector<const char *> CoCpnNcsContext::getConfigFieldNames() {
     testNonnegDbl(result, SAMPL_INTERVAL);
     testNonemptyDblVect(result, SC_DELAY_PROBS);
     testNonemptyDblVect(result, CA_DELAY_PROBS);
+
+    testNonnegBool(result, CTRL_EVT_BASED);
+    testNonnegDbl(result, CTRL_EVT_DEADBAND);
+    testNonnegLong(result, CTRL_EVT_TRIGGER);
+    testNonnegBool(result, SENSOR_EVT_BASED);
+    testNonnegDbl(result, SENSOR_EVT_DELTA);
 
     return result;
 }
@@ -45,4 +57,10 @@ void CoCpnNcsContext::setConfigValues(mwArray &cfgStruct) {
     setNonnegDbl(cfgStruct, SAMPL_INTERVAL);
     setNonemptyDblVect(cfgStruct, SC_DELAY_PROBS);
     setNonemptyDblVect(cfgStruct, CA_DELAY_PROBS);
+
+    setNonnegBool(cfgStruct, CTRL_EVT_BASED);
+    setNonnegDbl(cfgStruct, CTRL_EVT_DEADBAND);
+    setNonnegLong(cfgStruct, CTRL_EVT_TRIGGER);
+    setNonnegBool(cfgStruct, SENSOR_EVT_BASED);
+    setNonnegDbl(cfgStruct, SENSOR_EVT_DELTA);
 }

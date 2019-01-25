@@ -19,6 +19,11 @@ package libncs_omnet.util;
 // A generic traffic generator module, which is capable of generating either
 // simple packets or RawPackets. Derived from inet/applications/generic/IPvXTrafGen.
 //
+// GenericTrafGen can be re-triggered to send an arbitrary number of packet-sequences.
+// To schedule a new packet sequence, a new startTime value must be 
+// provided before stopTime has been reached. Both values will always be fetched
+// in an alternating manner, at startTime, stopTime is fetched, and vice versa.
+//
 simple GenericTrafGen
 {
     parameters:
@@ -27,9 +32,9 @@ simple GenericTrafGen
         // generate RawPackets (if true), or plain cPackets (if false) 
         bool generateRaw = default(false);
         // time of sending the first packet
-        double startTime @unit("s") = default(1s); 
+        volatile double startTime @unit("s") = default(1s); 
         // time of finishing sending, negative values mean forever
-        double stopTime @unit("s") = default(-1s);  
+        volatile double stopTime @unit("s") = default(-1s);  
         // may be a random value, e.g. exponential(1)
         volatile double sendInterval @unit("s") = default(10ms); 
         // max number of packets to generate, -1 means forever

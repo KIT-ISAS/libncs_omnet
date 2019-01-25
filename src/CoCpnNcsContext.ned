@@ -23,6 +23,8 @@ simple CoCpnNcsContext extends NcsContext like INcsContext
     parameters:
         @class(CoCpnNcsContext);
         
+        // default values are configured to "do not set/change MATLAB defaults"
+        
         int controlSequenceLength = default(-1);
         int maxControlSequenceDelay = default(-1);
         int maxMeasDelay = default(-1);
@@ -34,4 +36,10 @@ simple CoCpnNcsContext extends NcsContext like INcsContext
         double samplingInterval = default(-1);
         string scDelayProbs = default("");
         string caDelayProbs = default("");
+        
+        int controllerEventBased = default(-1); // boolean, 0 = off, >0 on
+        double controllerDeadband = default(-1);
+        int controllerEventTrigger = default(-1); // 1: QoC, 2: stage costs, 3: inputs only (default)
+        int sensorEventBased = default(-1); // boolean, 0 = off, >0 on
+        double sensorMeasDelta = default(-1);
 }

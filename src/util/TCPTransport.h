@@ -51,7 +51,7 @@ class TCPTransport : public cSimpleModule, public TCPSocket::CallbackInterface {
     // type used to represent/store the size of a data chunk, if in
     // datagramService mode.
     // Bigger chunks than max(PayloadSize_t) - sizeof(PayloadSize_t) cause TCPTransport to fail.
-    typedef uint16_t PayloadSize_t;
+    typedef uint32_t PayloadSize_t;
     struct SocketHandle_t {
         TCPSocket socket;
         ByteArray buffer; // reassembly buffer

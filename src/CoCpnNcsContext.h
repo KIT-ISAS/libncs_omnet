@@ -35,6 +35,12 @@ class CoCpnNcsContext : public NcsContext
     static const char SAMPL_INTERVAL[];
     static const char SC_DELAY_PROBS[];
     static const char CA_DELAY_PROBS[];
-};
 
+    static const char CTRL_EVT_BASED[];
+    static const char CTRL_EVT_DEADBAND[];
+    static const char CTRL_EVT_TRIGGER[];
+    static const char SENSOR_EVT_BASED[];
+    static const char SENSOR_EVT_DELTA[];
+
+};
 #endif

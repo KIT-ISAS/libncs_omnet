@@ -34,6 +34,8 @@ class GenericTrafGen : public cSimpleModule, public ILifecycle
 
     // parameters: see the NED files for more info
     bool generateRaw;
+    cPar * startTimePar;
+    cPar * stopTimePar;
     simtime_t startTime;
     simtime_t stopTime;
     cPar *sendIntervalPar = nullptr;
@@ -74,6 +76,7 @@ class GenericTrafGen : public cSimpleModule, public ILifecycle
     virtual void printPacket(cPacket *msg);
     virtual void processPacket(cPacket *msg);
     virtual bool handleOperationStage(LifecycleOperation *operation, int stage, IDoneCallback *doneCallback) override;
+
 };
 
 #endif

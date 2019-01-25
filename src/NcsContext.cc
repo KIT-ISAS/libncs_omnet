@@ -51,6 +51,7 @@ void NcsContext::initialize(const int stage) {
         caSentSignal = registerSignal("ca_sent");
         acSentSignal = registerSignal("ac_sent");
         qocSignal = registerSignal("act_qoc");
+        stageCostsSignal = registerSignal("act_stage_costs");
         scObservedDelaySignal = registerSignal("sc_delay_obs");
         caObservedDelaySignal = registerSignal("ca_delay_obs");
         acObservedDelaySignal = registerSignal("ac_delay_obs");
@@ -153,7 +154,13 @@ void NcsContext::handleMessage(cMessage * const msg) {
             mwArray mw_ncsStats;
             mwArray mw_timestamp(currentSimtime);
 
-            ncs_doLoopStep(2, mw_ncsPktList, mw_ncsStats, ncsHandle, mw_timestamp);
+            mwArray mw_paramStruct(mxSTRUCT_CLASS);
+//            const char* fields[] = {"controllerDeadband"};
+//            mwArray mw_paramStruct(1, 1, 1, fields);
+//            const mwArray value(42);
+//            mw_paramStruct("controllerDeadband", 1, 1).Set(value);
+
+            ncs_doLoopStep(2, mw_ncsPktList, mw_ncsStats, ncsHandle, mw_timestamp, mw_paramStruct);
 
             sendNcsPktList(mw_ncsPktList);
 
@@ -162,6 +169,8 @@ void NcsContext::handleMessage(cMessage * const msg) {
             emit(caSentSignal, static_cast<bool>(mw_ncsStats("ca_sent", 1, 1)));
             emit(acSentSignal, static_cast<bool>(mw_ncsStats("ac_sent", 1, 1)));
             emit(qocSignal, static_cast<double>(mw_ncsStats("actual_qoc", 1, 1)));
+            // for some reason, the additional call of Get(1,1) is required to avoid zeros
+            emit(stageCostsSignal, static_cast<double>(mw_ncsStats("actual_stagecosts", 1, 1).Get(1,1)));
 
             mwArray mw_scDelays = mw_ncsStats("sc_delays", 1, 1);
             mwArray mw_caDelays = mw_ncsStats("ca_delays", 1, 1);
@@ -255,6 +264,10 @@ void NcsContext::setConfigValues(mwArray &cfgStruct) {
     //    //cfgStruct("maxMeasDelay", 1, 1).Set(mw_maxMeasDelay);
 }
 
+void NcsContext::testNonnegBool(std::vector<const char *> &fieldNames, const char * name) {
+    testNonnegLong(fieldNames, name);
+}
+
 void NcsContext::testNonnegLong(std::vector<const char *> &fieldNames, const char * name) {
     if (par(name).longValue() >= 0) {
         fieldNames.push_back(name);
@@ -276,6 +289,14 @@ void NcsContext::testNonemptyDblVect(std::vector<const char *> &fieldNames, cons
         if (values > 0) {
             fieldNames.push_back(name);
         }
+    }
+}
+
+void NcsContext::setNonnegBool(mwArray &cfgStruct, const char * name) {
+    if (par(name).longValue() >= 0) {
+        const mwArray parValue(par(name).longValue() > 0);
+
+        cfgStruct(name, 1, 1).Set(parValue);
     }
 }
 
