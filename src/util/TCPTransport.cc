@@ -15,6 +15,8 @@
 
 #include "TCPTransport.h"
 
+#include <NcsCpsApp.h>
+
 #include <inet/common/RawPacket.h>
 
 Define_Module(TCPTransport);
@@ -24,10 +26,10 @@ TCPTransport::TCPTransport() {
 }
 
 TCPTransport::~TCPTransport() {
-    for (auto it = connectionMap.begin(); it != connectionMap.end(); ++it) {
+    for (auto it = connectionMap.begin(); it != connectionMap.end();) {
         delete it->second;
 
-        connectionMap.erase(it);
+        it = connectionMap.erase(it);
     }
 }
 
@@ -37,6 +39,7 @@ void TCPTransport::initialize() {
     upIn = gate("up$i");
     upOut = gate("up$o");
 
+    bytestreamService = par("bytestreamService");
     datagramService = par("datagramService");
 }
 
@@ -104,7 +107,7 @@ void TCPTransport::handleMessage(cMessage * const msg) {
             SocketHandle_t * const handle = getSocketByAddr(req->getDstAddr());
 
             if (handle) {
-                if (datagramService) {
+                if (datagramService && bytestreamService) {
                     RawPacket * const rawPkt = dynamic_cast<RawPacket *>(msg);
 
                     ASSERT(rawPkt);
@@ -127,11 +130,9 @@ void TCPTransport::handleMessage(cMessage * const msg) {
 
             delete req;
         } else {
-            const char * const name = msg->getName();
+            EV_WARN << "Received message with unknown control info type, ignoring: " << msg << endl;
 
             delete msg;
-
-            throw cRuntimeError("Received message with unknown control info type: %s", name);
         }
     } else {
         const char * const name = msg->getName();
@@ -143,13 +144,13 @@ void TCPTransport::handleMessage(cMessage * const msg) {
 }
 
 void TCPTransport::socketDataArrived(const int connId, void * const yourPtr, cPacket * const msg, const bool urgent) {
-    RawPacket * const rawPkt = dynamic_cast<RawPacket *>(msg);
-
-    ASSERT(rawPkt);
-
     SocketHandle_t * const handle = static_cast<SocketHandle_t *>(yourPtr);
 
-    if (datagramService) {
+    if (datagramService && bytestreamService) {
+        RawPacket * const rawPkt = dynamic_cast<RawPacket *>(msg);
+
+        ASSERT(rawPkt);
+
         // reassemble Packet
         ASSERT(rawPkt->getByteLength() <= rawPkt->getByteArray().getDataArraySize());
 
@@ -197,6 +198,22 @@ TransportDataInfo * TCPTransport::createDataInfo(SocketHandle_t* const handle) {
 }
 
 void TCPTransport::socketEstablished(const int connId, void *const yourPtr) {
+    SocketHandle_t * const handle = static_cast<SocketHandle_t *>(yourPtr);
+
+    if (!handle) {
+        throw cRuntimeError("socketEstablished(): Got unexpected yourPtr");
+    }
+
+    // confirm connection to upper layer
+    auto conf = new TransportConnectReq();
+    auto msg = new cMessage("Connection confirmation", CpsConnReq);
+
+    conf->setDstAddr(handle->socket.getRemoteAddress());
+    conf->setDstPort(handle->socket.getRemotePort());
+    msg->setControlInfo(conf);
+
+    send(msg, upOut);
+
     EV << "socketEstablished(): " << connId << std::endl;
 }
 
@@ -255,7 +272,7 @@ TCPTransport::SocketHandle_t* TCPTransport::createSocket(cMessage * const msg) {
 
     handle->socket.setOutputGate(tcpOut);
     handle->socket.setCallbackObject(this, handle);
-    handle->socket.setDataTransferMode(TCP_TRANSFER_BYTESTREAM);
+    handle->socket.setDataTransferMode(bytestreamService ? TCP_TRANSFER_BYTESTREAM : TCP_TRANSFER_OBJECT);
 
     return handle;
 }

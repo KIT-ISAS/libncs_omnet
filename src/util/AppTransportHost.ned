@@ -17,10 +17,12 @@ package libncs_omnet.util;
 
 import inet.transportlayer.contract.ITCP;
 import inet.transportlayer.contract.IUDP;
+import libncs_omnet.FCP.contract.IFCP;
 import libncs_omnet.util.GenericTransportHost;
 import libncs_omnet.util.ITransportApp;
 import libncs_omnet.util.TCPTransport;
 import libncs_omnet.util.UDPTransport;
+import libncs_omnet.util.FCPTransport;
 
 //
 // A host configuration module providing transport services of the *Transport
@@ -46,4 +48,5 @@ module AppTransportHost extends GenericTransportHost
     connections:
         tcpTransport.up <--> app.transport if useTcp;
         udpTransport.up <--> app.transport if useUdp;
+        fcpTransport.up <--> app.transport if useFcp;
 }

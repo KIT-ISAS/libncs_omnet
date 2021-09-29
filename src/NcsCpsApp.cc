@@ -13,12 +13,14 @@
 // along with this program.  If not, see http://www.gnu.org/licenses/.
 // 
 
-#include "util/TransportCtrlMsg_m.h"
+#include "NcsCpsApp.h"
+
+#include "util/TransportCtrlMsg.h"
 #include "messages/NcsCtrlMsg_m.h"
+#include "CoCC/CoCCUDPTransport.h"
 
 #include <inet/common/InitStages.h>
 #include <inet/common/RawPacket.h>
-#include <NcsCpsApp.h>
 
 Define_Module(NcsCpsApp);
 
@@ -40,7 +42,6 @@ void NcsCpsApp::initialize(const int stage) {
 
         doListen = par("doListen");
         connectPort = par("connectPort");
-        interArrivalTimeSignal = registerSignal("inter_arrival_t");
         break;
     case INITSTAGE_LAST:
         if (doListen) {
@@ -58,22 +59,39 @@ void NcsCpsApp::initialize(const int stage) {
 
 void NcsCpsApp::handleMessage(cMessage * const msg) {
     if (msg->arrivedOn(transportIn->getId())) {
-        RawPacket * const rawPkt = dynamic_cast<RawPacket *>(msg);
-        TransportDataInfo * const info = dynamic_cast<TransportDataInfo *>(msg->removeControlInfo());
+        switch (msg->getKind()) {
+        case CpsConnReq: {
+            auto req = dynamic_cast<TransportConnectReq *>(msg->removeControlInfo());
 
-        ASSERT(rawPkt);
-        ASSERT(info);
+            ASSERT(req);
 
-        NcsSendData * const req = new NcsSendData();
+            auto nReq = new NcsConnReq();
 
-        req->setSrcAddr(info->getSrcAddr());
-        req->setDstAddr(info->getDstAddr());
+            nReq->setDstAddr(req->getDstAddr());
+            msg->setControlInfo(nReq);
 
-        rawPkt->setControlInfo(req);
+            send(msg, ctxOut);
 
-        send(rawPkt, ctxOut);
+            delete(req);
+            break; }
+        default:
+            RawPacket * const rawPkt = dynamic_cast<RawPacket *>(msg);
+            TransportDataInfo * const info = dynamic_cast<TransportDataInfo *>(msg->removeControlInfo());
 
-        delete info;
+            ASSERT(rawPkt);
+            ASSERT(info);
+
+            NcsSendData * const req = new NcsSendData();
+
+            req->setSrcAddr(info->getSrcAddr());
+            req->setDstAddr(info->getDstAddr());
+
+            rawPkt->setControlInfo(req);
+
+            send(rawPkt, ctxOut);
+
+            delete info;
+        }
     } else if (msg->arrivedOn(ctxIn->getId())) {
         switch (msg->getKind()) {
         case CpsConnReq: {
@@ -118,10 +136,63 @@ void NcsCpsApp::handleMessage(cMessage * const msg) {
 
             delete req; // ControlInfo from NcsContext will be reconstructed on reception again
 
-            // collect statistics
-            emit(interArrivalTimeSignal, simTime() - lastPktTime);
+            break;
+        }
+        case CpsTranslator: {
+            NcsSetTranslator * const req = dynamic_cast<NcsSetTranslator *>(msg->removeControlInfo());
 
-            lastPktTime = simTime();
+            if (req == nullptr) {
+                throw cRuntimeError("handleMessage(): expected NcsSetTranslator control info in message.");
+            }
+
+            TransportSetTranslator * const info = new TransportSetTranslator();
+
+            info->setTranslator(req->getTranslator());
+            info->setRole(req->getRole());
+            info->setDstAddr(req->getDstAddr());
+            info->setDstPort(connectPort);
+            msg->setControlInfo(info);
+
+            send(msg, transportOut);
+            delete req;
+
+            break;
+        }
+        case CpsStreamStart: {
+            NcsStreamStartInfo * const req = dynamic_cast<NcsStreamStartInfo *>(msg->removeControlInfo());
+
+            if (req == nullptr) {
+                throw cRuntimeError("handleMessage(): expected NcsStreamStartInfo control info in message.");
+            }
+
+            TransportStreamStartInfo * const info = new TransportStreamStartInfo();
+
+            info->setStart(req->getStart());
+            info->setDstAddr(req->getDstAddr());
+            info->setDstPort(connectPort);
+            msg->setControlInfo(info);
+
+            send(msg, transportOut);
+            delete req;
+
+            break;
+        }
+        case CpsStreamStop: {
+            NcsStreamStopInfo * const req = dynamic_cast<NcsStreamStopInfo *>(msg->removeControlInfo());
+
+            if (req == nullptr) {
+                throw cRuntimeError("handleMessage(): expected NcsStreamStopInfo control info in message.");
+            }
+
+            TransportStreamStopInfo * const info = new TransportStreamStopInfo();
+
+            info->setStop(req->getStop());
+            info->setDstAddr(req->getDstAddr());
+            info->setDstPort(connectPort);
+            msg->setControlInfo(info);
+
+            send(msg, transportOut);
+            delete req;
 
             break;
         }

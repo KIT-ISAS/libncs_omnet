@@ -44,6 +44,9 @@ class PacketRedirector : public cSimpleModule {
     virtual int numInitStages() const;
     virtual void initialize(const int stage);
     virtual void handleMessage(cMessage *msg);
+
+private:
+    void initiateConnection();
 };
 
 #endif

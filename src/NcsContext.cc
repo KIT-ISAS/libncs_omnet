@@ -13,24 +13,41 @@
 // along with this program.  If not, see http://www.gnu.org/licenses/.
 // 
 
+#include "NcsContext.h"
+#include "NcsCpsApp.h"
+#include "messages/NcsCtrlMsg_m.h"
+
 #include <inet/common/InitStages.h>
 #include <inet/networklayer/common/L3AddressResolver.h>
-#include <NcsCpsApp.h>
-#include "NcsContext.h"
-#include "messages/NcsCtrlMsg_m.h"
 
 Define_Module(NcsContext);
 
-const char NcsContext::ACTUATOR_NAME[] = "actuator";
-const char NcsContext::CONTROLLER_NAME[] = "controller";
-const char NcsContext::SENSOR_NAME[] = "sensor";
-
-const std::string NcsContext::ACTUATOR_GATE = "actuator";
-const std::string NcsContext::CONTROLLER_GATE = "controller";
-const std::string NcsContext::SENSOR_GATE = "sensor";
-const std::string * NcsContext::GATE_NAMES[] = { &ACTUATOR_GATE, &CONTROLLER_GATE, &SENSOR_GATE };
+const std::string NcsContext::NCS_ACTUATOR = "actuator";
+const std::string NcsContext::NCS_CONTROLLER = "controller";
+const std::string NcsContext::NCS_SENSOR = "sensor";
+const std::string * NcsContext::NCS_NAMES[] = { &NCS_ACTUATOR, &NCS_CONTROLLER, &NCS_SENSOR };
 
 int NcsContext::ncsIdCounter = 1;
+
+
+
+NcsContext::~NcsContext() {
+    if (ncsParameters) {
+        delete ncsParameters;
+    }
+
+    if (ncsSignals) {
+        delete ncsSignals;
+    }
+
+    if (ncsControlStepResult) {
+        delete ncsControlStepResult;
+    }
+
+    if (ncsPlantStepResult) {
+        delete ncsPlantStepResult;
+    }
+}
 
 int NcsContext::numInitStages() const {
     return INITSTAGE_LAST;
@@ -42,157 +59,166 @@ void NcsContext::initialize(const int stage) {
         // reset at the beginning of each simulation to get the same IDs for repeated runs
         ncsIdCounter = 1;
 
-        // NcsManager is initialized in this stage
-        configFile = par("configFile").stdstringValue();
+        // get own parameters
+        ncsImplName = par("ncsImpl").stdstringValue();
+        networkStartupPollInterval = par ("networkStartupPollInterval").doubleValue();
         startupDelay = par("startupDelay").doubleValue();
+        simulationRuntime = par("simulationRuntime").doubleValue();
+        actionOnControllerFailure = par("actionOnControllerFailure").intValue();
+        minSampleCount = par("minSampleCount").intValue();
+        maxSampleCount = par("maxSampleCount").intValue();
+        maxSampleAge = par("maxSampleAge").doubleValue();
+        maxSampleBins = par("maxSampleBins").intValue();
+        reportUnusedStepsAsLoss = par("reportUnusedStepsAsLoss").boolValue();
+        pktStatisticsStartDelay = par("pktStatisticsStartDelay").doubleValue();
 
         // setup signals for statistics recording
         scSentSignal = registerSignal("sc_sent");
         caSentSignal = registerSignal("ca_sent");
         acSentSignal = registerSignal("ac_sent");
-        qocSignal = registerSignal("act_qoc");
-        stageCostsSignal = registerSignal("act_stage_costs");
-        scObservedDelaySignal = registerSignal("sc_delay_obs");
-        caObservedDelaySignal = registerSignal("ca_delay_obs");
-        acObservedDelaySignal = registerSignal("ac_delay_obs");
 
         scActualDelaySignal = registerSignal("sc_delay_act");
         caActualDelaySignal = registerSignal("ca_delay_act");
         acActualDelaySignal = registerSignal("ac_delay_act");
+
+        controlPeriodSignal = registerSignal("controlPeriod_s");
         break;
     case INITSTAGE_LOCAL + 1: {
         ncsId = ncsIdCounter++; // draw an identifier
 
-        // initialize NCS
-        const mwArray mw_ncsId(ncsId);
-        const mwArray mw_configFile(configFile.c_str());
+        // Prepare Parameters for NCS
+        ncsParameters = createParameters();
 
-        SimTime simTimeLimit = SimTime::parse(cSimulation::getActiveEnvir()->getConfig()->getConfigEntry("sim-time-limit").getValue());
-        const mwArray mw_maxSimTime((simTimeLimit -  startupDelay).inUnit(SIMTIME_PS));
+        // Prepare Signals for NCS
+        ncsSignals = createSignals();
 
-        mwArray mw_configStruct = this->createNcsConfigStruct();
-        ncs_initialize(1, ncsHandle, mw_maxSimTime, mw_ncsId, mw_configStruct, mw_configFile);
+        // initially create step result struct
+        ncsControlStepResult = createControlStepResult();
+        ncsPlantStepResult = createPlantStepResult();
+
+        // everything is set up right now, create and initialize NCS
+        ncs = createNcsImpl(ncsImplName);
+        ncs->initializeNcs(this);
+
+        // upon initialization, we can assume that the plant state is admissible
+        plantStateAdmissible = true;
+        controllerStateAdmissible = true;
 
         // setup periodic ticker event for NCS data processing
-        mwArray mw_tickerInterval;
-
-        ncs_getTickerInterval(1, mw_tickerInterval, ncsHandle);
-        tickerInterval = SimTime(static_cast<uint64_t>(mw_tickerInterval), SIMTIME_PS);
+        controlPeriod = ncs->getControlPeriod();
+        plantPeriod = ncs->getPlantPeriod();
+        nextControlStep = startupDelay + controlPeriod;
+        nextPlantStep = startupDelay + plantPeriod;
 
         cMessage * const tickerMsg = new cMessage("NcsTickerEvent", NCTXMK_TICKER_EVT);
 
-        scheduleAt(startupDelay + tickerInterval, tickerMsg);
+        scheduleAt(std::min(nextPlantStep, nextControlStep), tickerMsg);
 
-        break; }
+        if (pktStatisticsStartDelay > SIMTIME_ZERO) {
+            cMessage * const statisticsStartup = new cMessage("NcsPktStatisticsStartEvent", NCTXMK_STARTUP_STATS_EVT);
+
+            scheduleAt(pktStatisticsStartDelay, statisticsStartup);
+        }
+
+        emit(controlPeriodSignal, controlPeriod);
+
+        } break;
     case INITSTAGE_APPLICATION_LAYER: {
-        // IP auto assignment, lookup address by name
-        // self.prefix + "controller|actuator|sensor"
+        networkConfigured = false;
 
-        cModule * const parent = getParentModule();
+        if (networkStartupPollInterval != SIMTIME_ZERO) {
+            cMessage * const tickerMsg = new cMessage("NcsStartupPollTicker", NCTXMK_STARTUP_POLL_EVT);
 
-        ASSERT(parent);
-
-        const std::string parentPath = parent->getFullPath();
-
-        L3AddressResolver().tryResolve((parentPath + "." + ACTUATOR_NAME).c_str(), cpsAddr[NCTXCI_ACTUATOR]);
-        L3AddressResolver().tryResolve((parentPath + "." + CONTROLLER_NAME).c_str(), cpsAddr[NCTXCI_CONTROLLER]);
-        L3AddressResolver().tryResolve((parentPath + "." + SENSOR_NAME).c_str(), cpsAddr[NCTXCI_SENSOR]);
-
-        if (cpsAddr[NCTXCI_ACTUATOR].isUnspecified()) {
-            error(("Unable to resolve address of actuator for NCS " + parentPath).c_str());
+            scheduleAt(networkStartupPollInterval, tickerMsg);
+        } else {
+            if (!setupNCSConnections()) {
+                error("Network was not fully set up during initialization, MatlabNcsContext is unable to operate. Network startup poll interval must be configured.");
+            }
         }
-        if (cpsAddr[NCTXCI_CONTROLLER].isUnspecified()) {
-            error(("Unable to resolve address of controller for NCS " + parentPath).c_str());
-        }
-        if (cpsAddr[NCTXCI_SENSOR].isUnspecified()) {
-            error(("Unable to resolve address of sensor for NCS " + parentPath).c_str());
-        }
-
-        EV << parent->getFullPath() << "." << ACTUATOR_NAME << " is " << cpsAddr[NCTXCI_ACTUATOR].str() << endl;
-        EV << parent->getFullPath() << "." << CONTROLLER_NAME << " is " << cpsAddr[NCTXCI_CONTROLLER].str() << endl;
-        EV << parent->getFullPath() << "." << SENSOR_NAME << " is " << cpsAddr[NCTXCI_SENSOR].str() << endl;
-
-        // connect Controller to Actuator and Sensor
-        connect(NCTXCI_ACTUATOR);
-        connect(NCTXCI_SENSOR);
-
-        break; }
+        } break;
     }
 }
 
 void NcsContext::finish() {
     EV << "Finish called for NCS with id " << ncsId << endl;
 
-    // record NCS statistics
+    finishNcs();
 
-    mwArray mw_costs;
-    mwArray mw_ncsStats;
+    // record NCS statistics and do potential cleanup
+    ncs->finishNcs();
+}
 
-    ncs_finalize(2, mw_costs, mw_ncsStats, this->ncsHandle);
+void NcsContext::finishNcs() {
+    emit(registerSignal("sen_pktsSent_s"), scHist.pktsSent());
+    emit(registerSignal("sen_pktsArrived_s"), scHist.pktsArrived());
+    emit(registerSignal("sen_pktsLost_s"), scHist.pktsLost());
+    emit(registerSignal("con_pktsSent_s"), caHist.pktsSent());
+    emit(registerSignal("con_pktsArrived_s"), caHist.pktsArrived());
+    emit(registerSignal("con_pktsLost_s"), caHist.pktsLost());
+    emit(registerSignal("act_pktsSent_s"), scHist.pktsSent());
+    emit(registerSignal("act_pktsArrived_s"), scHist.pktsArrived());
+    emit(registerSignal("act_pktsLost_s"), scHist.pktsLost());
 
-    this->recordScalar("total_control_costs", (double) mw_costs);
-
-    // the stats should be a given as a single struct
-    ASSERT(mw_ncsStats.NumberOfElements() == 1);
-    ASSERT(mw_ncsStats.ClassID() == mxSTRUCT_CLASS);
-
-    for (int i = 0; i < mw_ncsStats.NumberOfFields(); ++i) {
-        const char* fieldName = (const char*) mw_ncsStats.GetFieldName(i);
-
-        this->recordStatistics(mw_ncsStats(fieldName, 1, 1), fieldName);
-    }
+    emit(registerSignal("plantStateAdmissible_s"), plantStateAdmissible);
+    emit(registerSignal("controllerStateAdmissible_s"), controllerStateAdmissible);
 }
 
 void NcsContext::handleMessage(cMessage * const msg) {
     if (msg->isSelfMessage()) {
         switch (msg->getKind()) {
         case NCTXMK_TICKER_EVT: {
+            const simtime_t now = simTime();
             // call loop with current timestamp, adjusted for the startup delay
-            // thus, the matlab code never needs to deal with the time offset
-            int64_t currentSimtime = (simTime() - startupDelay).inUnit(SIMTIME_PS);
-            mwArray mw_ncsPktList;
-            mwArray mw_ncsStats;
-            mwArray mw_timestamp(currentSimtime);
+            // thus, NCS code never needs to deal with the time offset
+            const simtime_t ncsSimtime = now - startupDelay;
 
-            mwArray mw_paramStruct(mxSTRUCT_CLASS);
-//            const char* fields[] = {"controllerDeadband"};
-//            mwArray mw_paramStruct(1, 1, 1, fields);
-//            const mwArray value(42);
-//            mw_paramStruct("controllerDeadband", 1, 1).Set(value);
+            if (simulationRuntime > SIMTIME_ZERO && ncsSimtime > simulationRuntime) {
+                delete msg;
 
-            ncs_doLoopStep(2, mw_ncsPktList, mw_ncsStats, ncsHandle, mw_timestamp, mw_paramStruct);
+                EV_INFO << "runtime limit reached for NCS, stopping periodic ticker" << endl;
 
-            sendNcsPktList(mw_ncsPktList);
+                ncsRuntimeLimitReached();
 
-            // signal updated statistical data
-            emit(scSentSignal, static_cast<bool>(mw_ncsStats("sc_sent", 1, 1)));
-            emit(caSentSignal, static_cast<bool>(mw_ncsStats("ca_sent", 1, 1)));
-            emit(acSentSignal, static_cast<bool>(mw_ncsStats("ac_sent", 1, 1)));
-            emit(qocSignal, static_cast<double>(mw_ncsStats("actual_qoc", 1, 1)));
-            // for some reason, the additional call of Get(1,1) is required to avoid zeros
-            emit(stageCostsSignal, static_cast<double>(mw_ncsStats("actual_stagecosts", 1, 1).Get(1,1)));
-
-            mwArray mw_scDelays = mw_ncsStats("sc_delays", 1, 1);
-            mwArray mw_caDelays = mw_ncsStats("ca_delays", 1, 1);
-            mwArray mw_acDelays = mw_ncsStats("ac_delays", 1, 1);
-            const size_t scCount = mw_scDelays.NumberOfElements();
-            const size_t caCount = mw_caDelays.NumberOfElements();
-            const size_t acCount = mw_acDelays.NumberOfElements();
-
-            for (size_t i = 1; i <= scCount; i++) {
-                emit(scObservedDelaySignal, static_cast<uint64_t>(mw_scDelays(i)) * tickerInterval);
+                return;
             }
-            for (size_t i = 1; i <= caCount; i++) {
-                emit(caObservedDelaySignal, static_cast<uint64_t>(mw_caDelays(i)) * tickerInterval);
-            }
-            for (size_t i = 1; i <= acCount; i++) {
-                emit(acObservedDelaySignal, static_cast<uint64_t>(mw_acDelays(i)) * tickerInterval);
+
+            if (now == nextPlantStep) {
+                doPlantStep(ncsSimtime);
+
+                nextPlantStep += plantPeriod;
+            } else {
+                ASSERT(now == nextControlStep);
+
+                // update delay histogram data
+                scHist.prune(now, maxSampleAge, minSampleCount, maxSampleCount);
+                caHist.prune(now, maxSampleAge, minSampleCount, maxSampleCount);
+                acHist.prune(now, maxSampleAge, minSampleCount, maxSampleCount);
+
+                doControlStep(ncsSimtime);
+
+                nextControlStep += controlPeriod;
             }
 
             // reschedule ticker-event for next step
-            scheduleAt(simTime() + tickerInterval, msg);
+            scheduleAt(std::min(nextPlantStep, nextControlStep), msg);
 
             break; }
+        case NCTXMK_STARTUP_POLL_EVT:
+            if (!setupNCSConnections()) {
+                EV_WARN << "Network is not ready yet, retrying again later" << endl;
+                // reschedule polling event for next try
+                scheduleAt(simTime() + networkStartupPollInterval, msg);
+            } else {
+                delete msg;
+            }
+            break;
+        case NCTXMK_STARTUP_STATS_EVT:
+            scHist.resetStats();
+            caHist.resetStats();
+            acHist.resetStats();
+
+            delete msg;
+            break;
         default:
             const int msgKind = msg->getKind();
 
@@ -200,45 +226,34 @@ void NcsContext::handleMessage(cMessage * const msg) {
 
             error("Received self-message with unexpected message kind: %i", msgKind);
         }
-    } else if (msg->arrivedOn((ACTUATOR_GATE + "$i").c_str())
-                    || msg->arrivedOn((CONTROLLER_GATE + "$i").c_str())
-                    || msg->arrivedOn((SENSOR_GATE + "$i").c_str())) {
+    } else if (msg->arrivedOn((NCS_ACTUATOR + "$i").c_str())
+                    || msg->arrivedOn((NCS_CONTROLLER + "$i").c_str())
+                    || msg->arrivedOn((NCS_SENSOR + "$i").c_str())) {
         // packet arriving at a CPS gate
+        switch (msg->getKind()) {
+        case CpsConnReq: {
+            NcsConnReq * const req = dynamic_cast<NcsConnReq *>(msg->removeControlInfo());
 
-        RawPacket * const rawPkt = dynamic_cast<RawPacket *>(msg);
+            const NcsContextComponentIndex index = getIndexForAddr(req->getDstAddr());
 
-        if (!rawPkt) {
-            error("Received unexpected packet kind at CPS in gate");
-        }
+            ASSERT(index < NCTXCI_COUNT);
 
-        mwArray mw_pkt = createNcsPkt(rawPkt);
+            postConnect(index);
 
-        // collect delay statistics for S->C, C->A, A->C
-        const simtime_t pktDelay = simTime() - getNcsPktTimestamp(mw_pkt);
+            delete req;
+            delete msg;
+            break; }
+        default:
+            RawPacket * const rawPkt = dynamic_cast<RawPacket *>(msg);
 
-        if (rawPkt->arrivedOn((CONTROLLER_GATE + "$i").c_str())) {
-            if (ncsPktIsAck(mw_pkt)) {
-                // ACK packet sent back from actuator
-                emit(acActualDelaySignal, pktDelay);
-            } else {
-                // regular data packet from sensor to controller
-                emit(scActualDelaySignal, pktDelay);
+            if (!rawPkt) {
+                error("Received unexpected packet kind at CPS in gate");
             }
-        } else {
-            emit(caActualDelaySignal, pktDelay);
+
+            handleNcsPacketFromNetwork(rawPkt);
+
+            delete rawPkt;
         }
-
-        delete msg; // message will not be required any more, free it
-
-        const int64_t currentSimtime = (simTime() - startupDelay).inUnit(SIMTIME_PS);
-        mwArray mw_ncsPktList;
-        mwArray mw_timestamp(currentSimtime);
-
-        // forward to MATLAB/NCS model
-        ncs_doHandlePacket(1, mw_ncsPktList, ncsHandle, mw_timestamp, mw_pkt);
-
-        // and push replies back into the network
-        sendNcsPktList(mw_ncsPktList);
     } else {
         const char * const name = msg->getName();
 
@@ -248,88 +263,297 @@ void NcsContext::handleMessage(cMessage * const msg) {
     }
 }
 
+NcsContext::NcsDelays NcsContext::computeDelays() {
+    NcsContext::NcsDelays result;
+    const simtime_t now = simTime();
 
-std::vector<const char *> NcsContext::getConfigFieldNames() {
-    return std::vector<const char *>();
+    result.sc = scHist.compute(now, controlPeriod, maxSampleBins);
+    result.ca = caHist.compute(now, controlPeriod, maxSampleBins);
+
+    return result;
 }
 
-void NcsContext::setConfigValues(mwArray &cfgStruct) {
-    // nop.
+void NcsContext::updateControlPeriod(const simtime_t newControlPeriod) {
+    ASSERT(simTime() == nextControlStep);
 
-    //Usage example
-    //    mwArray mw_configStruct(1, 1, 1, fieldnames);
-    //    mwArray mw_seqLength(42); //cfgStruct("controlSequenceLength", 1, 1);
-    //    cfgStruct("controlSequenceLength", 1, 1) = mw_seqLength;
-    //    //mwArray mw_maxMeasDelay(42);
-    //    //cfgStruct("maxMeasDelay", 1, 1).Set(mw_maxMeasDelay);
+    controlPeriod = newControlPeriod;
+
+    emit(controlPeriodSignal, newControlPeriod);
 }
 
-void NcsContext::testNonnegBool(std::vector<const char *> &fieldNames, const char * name) {
-    testNonnegLong(fieldNames, name);
+NcsContext::NcsParameters* NcsContext::createParameters(NcsParameters * const parameters) {
+    NcsParameters * const result = (parameters != nullptr) ? parameters : new NcsParameters();
+
+    result->ncsId = ncsId;
+    result->startupDelay = startupDelay;
+    result->simTimeLimit = SimTime::parse(cSimulation::getActiveEnvir()->getConfig()->getConfigEntry("sim-time-limit").getValue());
+    result->configFile =  &par("configFile");
+    result->controllerClassName = &par("controllerClassName");
+    result->filterClassName = &par("filterClassName");
+    result->networkType = &par("networkType");
+    result->controlSequenceLength = &par("controlSequenceLength");
+    result->maxMeasDelay = &par("maxMeasDelay");
+    result->mpcHorizon = &par("mpcHorizon");
+    result->controlErrorWindowSize = &par("controlErrorWindowSize");
+
+    return result;
 }
 
-void NcsContext::testNonnegLong(std::vector<const char *> &fieldNames, const char * name) {
-    if (par(name).longValue() >= 0) {
-        fieldNames.push_back(name);
+NcsContext::NcsSignals* NcsContext::createSignals(NcsSignals * const signals) {
+    NcsSignals * const result = (signals != nullptr) ? signals : new NcsSignals();
+
+    result->controlErrorSignal = registerSignal("act_control_error");
+    result->estControlErrorSignal = registerSignal("est_control_error");
+    result->stageCostsSignal = registerSignal("act_stage_costs");
+    result->scObservedDelaySignal = registerSignal("sc_delay_obs");
+    result->caObservedDelaySignal = registerSignal("ca_delay_obs");
+    result->acObservedDelaySignal = registerSignal("ac_delay_obs");
+
+    return result;
+}
+
+NcsContext::NcsControlStepResult* NcsContext::createControlStepResult() {
+    return new NcsControlStepResult();
+}
+
+NcsContext::NcsPlantStepResult* NcsContext::createPlantStepResult() {
+    return new NcsPlantStepResult();
+}
+
+AbstractNcsImpl* NcsContext::createNcsImpl(const std::string name) {
+    cModuleType * const moduleType = cModuleType::get(name.c_str());
+
+    cModule * const module = moduleType->createScheduleInit("ncs", this);
+
+    AbstractNcsImpl * const result = dynamic_cast<AbstractNcsImpl * const>(module);
+
+    if (result == nullptr) {
+        delete module;
+
+        error("Failed to instantiate NCS implementation %s", name);
+    }
+
+    return result;
+}
+
+void NcsContext::doPlantStep(const simtime_t& ncsTime) {
+    ncs->doPlantStep(ncsTime, ncsPlantStepResult);
+
+    processPlantStepResult(ncsTime, ncsPlantStepResult);
+}
+
+void NcsContext::doControlStep(const simtime_t& ncsTime) {
+    ncs->doControlStep(ncsTime, ncsControlStepResult);
+
+    processControlStepResult(ncsTime, ncsControlStepResult);
+}
+
+void NcsContext::processPlantStepResult(const simtime_t& ncsTime, const NcsPlantStepResult * const result) {
+    if (!result->plantStateAdmissible) {
+        plantStateAdmissible = false;
+
+        handleControllerFailure();
     }
 }
 
-void NcsContext::testNonnegDbl(std::vector<const char *> &fieldNames, const char * name) {
-    if (par(name).doubleValue() >= 0) {
-        fieldNames.push_back(name);
+void NcsContext::processControlStepResult(const simtime_t& ncsTime, const NcsControlStepResult * const result) {
+    if (!result->controllerStateAdmissible) {
+        controllerStateAdmissible = false;
+
+        handleControllerFailure();
+    }
+
+    CommunicationStatus cs = sendNcsPacketsToNetwork(result->pkts);
+
+    // report control sequence as lost, if event-trigger decided to suppress it
+    if (reportUnusedStepsAsLoss && !cs.ca) {
+        caHist.sent(-1, simTime(), true);
     }
 }
 
-void NcsContext::testNonemptyDblVect(std::vector<const char *> &fieldNames, const char * name) {
-    if (par(name).stdstringValue().length() > 0) {
-        cStringTokenizer tokens(par(name).stringValue());
-        const std::vector<double> dbls = tokens.asDoubleVector();
-        const size_t values = dbls.size();
+void NcsContext::handleControllerFailure() {
+    switch (actionOnControllerFailure) {
+    case NCTXCFA_FINISH:
+        endSimulation();
+        break;
+    case NCTXCFA_ABORT:
+        error("Plant or controller left admissible state at time %s", simTime().str());
+        break;
+    default: // ignore
+        break;
+    }
+}
 
-        if (values > 0) {
-            fieldNames.push_back(name);
+NcsContext::CommunicationStatus NcsContext::sendNcsPacketsToNetwork(const std::vector<NcsPkt> pkts) {
+    CommunicationStatus cs = CommunicationStatus{false, false, false};
+
+    if (networkConfigured) {
+        for (auto &pkt : pkts) {
+            sendNcsPacketToNetwork(pkt, cs);
+        }
+    } else {
+        EV_WARN << "Network did not finish initialization at time t=" << simTime().str()
+                << ". Dropping all NCS communication of NCS " << ncsId << " for this time step." << endl;
+    }
+
+    // signal updated statistical data
+    emit(scSentSignal, cs.sc);
+    emit(caSentSignal, cs.ca);
+    emit(acSentSignal, cs.ac);
+
+    return cs;
+}
+
+void NcsContext::sendNcsPacketToNetwork(const NcsPkt& ncsPkt, CommunicationStatus& cs) {
+    // send NCS packet via the matching CPS into the network
+
+    RawPacket* const rawPkt = ncsPkt.pkt;
+    NcsSendData* const req = new NcsSendData();
+
+    const unsigned int srcIndex = ncsPkt.src;
+    const unsigned int dstIndex = ncsPkt.dst;
+
+    ASSERT(srcIndex < NCTXCI_COUNT);
+    ASSERT(dstIndex < NCTXCI_COUNT);
+
+    req->setSrcAddr(cpsAddr[srcIndex]);
+    req->setDstAddr(cpsAddr[dstIndex]);
+
+    rawPkt->setName("CPS Payload");
+    rawPkt->setKind(CpsSendData);
+    rawPkt->setControlInfo(req);
+
+    const uint64_t pktId = ncsPkt.pktId;
+
+    switch (srcIndex) {
+    case NCTXCI_ACTUATOR:
+        // actuator->controller
+        acHist.sent(pktId, simTime());
+        cs.ac = true;
+        break;
+    case NCTXCI_CONTROLLER:
+        // controller->actuator
+        caHist.sent(pktId, simTime());
+        cs.ca = true;
+        break;
+    case NCTXCI_SENSOR:
+        // sensor-->controller
+        scHist.sent(pktId, simTime());
+        cs.sc = true;
+        break;
+    default:
+        ASSERT(false);
+    }
+
+    EV << "pktId " << pktId << ": " << rawPkt->getByteLength()
+            << " bytes ctx payload out from " << NCS_NAMES[srcIndex]->c_str()
+            << " to " << NCS_NAMES[dstIndex]->c_str() << endl;
+
+    send(rawPkt, (*NCS_NAMES[srcIndex] + "$o").c_str()); // forward pkt to sending CPS
+}
+
+void NcsContext::handleNcsPacketFromNetwork(RawPacket* const rawPkt) {
+    NcsSendData * const info = dynamic_cast<NcsSendData *>(rawPkt->getControlInfo());
+    const size_t payloadSize = rawPkt->getByteArray().getDataArraySize();
+
+
+    ASSERT(info);
+
+    const simtime_t now = simTime();
+    const simtime_t ncsSimtime = (now - startupDelay);
+
+    NcsPkt ncsPkt = NcsPkt{
+        getIndexForAddr(info->getSrcAddr()),
+        getIndexForAddr(info->getDstAddr()),
+        0, // unknown
+        false, // to be computed
+        rawPkt
+    };
+    ncsPkt.isAck = (ncsPkt.src == NCTXCI_ACTUATOR) && (ncsPkt.dst == NCTXCI_CONTROLLER);
+
+    EV << "raw packet with " << payloadSize << " bytes ctx payload in from "
+                << NCS_NAMES[ncsPkt.src]->c_str() << " to " << NCS_NAMES[ncsPkt.dst]->c_str() << endl;
+
+
+    // forward to NCS model
+    std::vector<NcsContext::NcsPkt> pktList = ncs->handlePacket(ncsSimtime, ncsPkt);
+
+    const simtime_t pktDelay = now - rawPkt->getCreationTime();
+    const uint64_t pktId = ncsPkt.pktId;
+
+    if (ncsPkt.dst == NCTXCI_ACTUATOR) {
+        emit(caActualDelaySignal, pktDelay);
+        caHist.received(pktId, now);
+    } else if (ncsPkt.dst == NCTXCI_CONTROLLER) {
+        if (!ncsPkt.isAck) {
+            // regular data packet from sensor to controller
+            emit(scActualDelaySignal, pktDelay);
+            scHist.received(pktId, now);
+        } else {
+            // ACK packet sent back from actuator
+            emit(acActualDelaySignal, pktDelay);
+            acHist.received(pktId, now);
         }
     }
-}
 
-void NcsContext::setNonnegBool(mwArray &cfgStruct, const char * name) {
-    if (par(name).longValue() >= 0) {
-        const mwArray parValue(par(name).longValue() > 0);
+    EV_INFO << "pktId " << pktId << " in with delay " << pktDelay << endl;
 
-        cfgStruct(name, 1, 1).Set(parValue);
+    // and push replies back into the network
+    if (pktList.size() > 0) {
+        sendNcsPacketsToNetwork(pktList);
     }
 }
 
-void NcsContext::setNonnegLong(mwArray &cfgStruct, const char * name) {
-    if (par(name).longValue() >= 0) {
-        const mwArray parValue(par(name).longValue());
+bool NcsContext::setupNCSConnections() {
+    // IP auto assignment, lookup address by name
+    // self.prefix + "controller|actuator|sensor"
+    cModule* const parent = getParentModule();
 
-        cfgStruct(name, 1, 1).Set(parValue);
+    ASSERT(parent);
+
+    const std::string parentPath = parent->getFullPath();
+
+    L3AddressResolver().tryResolve((parentPath + "." + NCS_ACTUATOR).c_str(),
+            cpsAddr[NCTXCI_ACTUATOR],
+            L3AddressResolver::ADDR_IPv4 | L3AddressResolver::ADDR_IPv6);
+    L3AddressResolver().tryResolve((parentPath + "." + NCS_CONTROLLER).c_str(),
+            cpsAddr[NCTXCI_CONTROLLER],
+            L3AddressResolver::ADDR_IPv4 | L3AddressResolver::ADDR_IPv6);
+    L3AddressResolver().tryResolve((parentPath + "." + NCS_SENSOR).c_str(),
+            cpsAddr[NCTXCI_SENSOR],
+            L3AddressResolver::ADDR_IPv4 | L3AddressResolver::ADDR_IPv6);
+
+    if (cpsAddr[NCTXCI_ACTUATOR].isUnspecified()) {
+        error(("Unable to resolve address of actuator for NCS " + parentPath).c_str());
     }
-}
-
-void NcsContext::setNonnegDbl(mwArray &cfgStruct, const char * name) {
-    if (par(name).doubleValue() >= 0) {
-        const mwArray parValue(par(name).doubleValue());
-
-        cfgStruct(name, 1, 1).Set(parValue);
+    if (cpsAddr[NCTXCI_CONTROLLER].isUnspecified()) {
+        error(("Unable to resolve address of controller for NCS " + parentPath).c_str());
     }
-}
-
-void NcsContext::setNonemptyDblVect(mwArray &cfgStruct, const char * name) {
-    if (par(name).stdstringValue().length() > 0) {
-        cStringTokenizer tokens(par(name).stringValue());
-        const std::vector<double> dbls = tokens.asDoubleVector();
-        const size_t values = dbls.size();
-
-        if (values > 0) {
-            mwArray mwValues(1, &values, mxDOUBLE_CLASS);
-
-            mwValues.SetData(const_cast<double *>(dbls.data()), values);
-
-            cfgStruct(name, 1, 1).Set(mwValues);
-        }
+    if (cpsAddr[NCTXCI_SENSOR].isUnspecified()) {
+        error(("Unable to resolve address of sensor for NCS " + parentPath).c_str());
     }
+
+    if (cpsAddr[NCTXCI_ACTUATOR].isLinkLocal()
+            || cpsAddr[NCTXCI_CONTROLLER].isLinkLocal()
+            || cpsAddr[NCTXCI_SENSOR].isLinkLocal()) {
+        // we will not rely on link local adresses
+        // routing will not work in case of IPv6
+        return false;
+    }
+
+    EV << parent->getFullPath() << "." << NCS_ACTUATOR << " is " << cpsAddr[NCTXCI_ACTUATOR].str() << endl;
+    EV << parent->getFullPath() << "." << NCS_CONTROLLER << " is " << cpsAddr[NCTXCI_CONTROLLER].str() << endl;
+    EV << parent->getFullPath() << "." << NCS_SENSOR << " is " << cpsAddr[NCTXCI_SENSOR].str() << endl;
+
+    // connect Controller to Actuator and Sensor
+    connect(NCTXCI_ACTUATOR);
+    connect(NCTXCI_SENSOR);
+
+    networkConfigured = true;
+
+    postNetworkInit();
+
+    return networkConfigured;
 }
 
 void NcsContext::connect(const NcsContextComponentIndex dst) {
@@ -342,169 +566,7 @@ void NcsContext::connect(const NcsContextComponentIndex dst) {
 
     msg->setControlInfo(req);
 
-    send(msg, (*GATE_NAMES[NCTXCI_CONTROLLER] + "$o").c_str());
-}
-
-void NcsContext::recordStatistics(const mwArray& statistics, const std::string& statName) {
-    mwArray dims = statistics.GetDimensions();
-    uint32_t numRows = dims(1);
-
-    cOutVector** statsVecs = new cOutVector*[numRows];
-    const std::string name = statName;
-
-    if (numRows == 1) {
-        statsVecs[0] = new cOutVector(name.c_str());
-        statsVecs[0]->setType(cOutVector::TYPE_DOUBLE);
-    } else {
-        for (uint32_t i= 0; i < numRows; ++i) {
-            statsVecs[i] = new cOutVector((statName + "(" + std::to_string(i+1) + ")").c_str());
-            statsVecs[i]->setType(cOutVector::TYPE_DOUBLE);
-        }
-    }
-    uint32_t numElements = dims(2);
-    for (uint32_t i = 0; i < numElements; ++i) {
-        const simtime_t time = this->tickerInterval * i + startupDelay;
-
-        for (uint32_t j = 0; j < numRows; ++j) {
-            statsVecs[j]->recordWithTimestamp(time, (double) statistics(j + 1, i + 1));
-        }
-    }
-    for (uint32_t i= 0; i < numRows; ++i) {
-        delete statsVecs[i];
-    }
-
-    delete[] statsVecs;
-}
-
-mwArray NcsContext::createNcsConfigStruct() {
-    const std::vector<const char *> fields = getConfigFieldNames();
-
-    mwArray result = fields.size() > 0 ? mwArray(1, 1, fields.size(), const_cast<const char **>(fields.data())) : mwArray(mxSTRUCT_CLASS);
-
-    setConfigValues(result);
-
-    return result;
-}
-
-mwArray NcsContext::createNcsPkt(RawPacket* const msg) {
-    // transform the OMNeT++/INET RawPacket to a MATLAB NCS packet
-
-    NcsSendData* const req = dynamic_cast<NcsSendData*>(msg->getControlInfo());
-
-    const NcsContextComponentIndex srcIndex = getIndexForAddr(req->getSrcAddr());
-    const NcsContextComponentIndex dstIndex = getIndexForAddr(req->getDstAddr());
-
-    EV << "ctx payload in from " << srcIndex << " to " << dstIndex << endl;
-
-    ASSERT(srcIndex < NCTXCI_COUNT);
-    ASSERT(dstIndex < NCTXCI_COUNT);
-
-    const size_t payloadSize = msg->getByteArray().getDataArraySize();
-
-    EV << "Received payload of size " << payloadSize << " from raw packet" << endl;
-
-    mwArray mw_payload(1, &payloadSize, mxUINT8_CLASS);
-
-    mw_payload.SetData(reinterpret_cast<mxUint8 *>(msg->getByteArray().getDataPtr()), payloadSize);
-
-    EV << "Attempt to create Matlab DataPacket from raw packet" << endl;
-
-    mwArray mw_src(srcIndex);
-    mwArray mw_dst(dstIndex);
-    mwArray mw_pkt;
-
-    ncs_pktCreate(1, mw_pkt, mw_src, mw_dst, mw_payload);
-
-    return mw_pkt;
-}
-
-simtime_t NcsContext::getNcsPktTimestamp(const mwArray& mw_pkt) {
-    mwArray mw_timestamp;
-
-    ncs_pktGetTimeStamp(1, mw_timestamp, mw_pkt);
-
-    return tickerInterval * static_cast<uint64_t>(mw_timestamp) + startupDelay;
-}
-
-bool NcsContext::ncsPktIsAck(const mwArray& mw_pkt) {
-    mwArray mw_isAck;
-
-    ncs_pktIsAck(1, mw_isAck, mw_pkt);
-
-    return static_cast<bool>(mw_isAck);
-}
-
-RawPacket* NcsContext::parseNcsPkt(const mwArray& mw_pkt) {
-    // transform the MATLAB NCS packet into an OMNeT++/INET RawPacket
-
-    ASSERT(mw_pkt.NumberOfElements() == 1);
-
-    mwArray mw_src, mw_dst, mw_payload;
-
-    ncs_pktGetSrcAddr(1, mw_src, mw_pkt);
-    ncs_pktGetDstAddr(1, mw_dst, mw_pkt);
-    ncs_pktGetPayload(1, mw_payload, mw_pkt);
-
-    // the payload should be a byte stream (row vector like 1-by-n)
-    ASSERT(mw_payload.NumberOfDimensions() == 2);
-    ASSERT((size_t ) mw_payload.GetDimensions()(1) == 1);
-    ASSERT(mw_payload.ClassID() == mxUINT8_CLASS);
-
-    RawPacket* const rawPkt = new RawPacket("CPS Payload", CpsSendData);
-    NcsSendData* const req = new NcsSendData();
-    ByteArray payloadArray;
-    uint8_t payloadBuf[mw_payload.NumberOfElements()];
-
-    mw_payload.GetData(payloadBuf, sizeof(payloadBuf));
-    payloadArray.setDataFromBuffer(payloadBuf, sizeof(payloadBuf));
-
-    const int srcIndex = mw_src;
-    const int dstIndex = mw_dst;
-
-    ASSERT(srcIndex < NCTXCI_COUNT);
-    ASSERT(dstIndex < NCTXCI_COUNT);
-
-    req->setSrcAddr(cpsAddr[srcIndex]);
-    req->setDstAddr(cpsAddr[dstIndex]);
-
-    rawPkt->setByteLength(sizeof(payloadBuf));
-    rawPkt->setByteArray(payloadArray);
-    rawPkt->setControlInfo(req);
-
-    return rawPkt;
-}
-
-void NcsContext::sendNcsPkt(const mwArray& mw_pkt) {
-    // send NCS packet from MATLAB via the matching CPS into the network
-
-    RawPacket* const rawPkt = parseNcsPkt(mw_pkt);
-    NcsSendData* const req = dynamic_cast<NcsSendData*>(rawPkt->getControlInfo());
-
-    const int srcIndex = getIndexForAddr(req->getSrcAddr());
-    const int dstIndex = getIndexForAddr(req->getDstAddr());
-
-    EV << rawPkt->getByteLength() << " bytes ctx payload out from " << srcIndex << " to " << dstIndex << endl;
-
-    send(rawPkt, (*GATE_NAMES[srcIndex] + "$o").c_str()); // forward pkt to sending CPS
-}
-
-void NcsContext::sendNcsPktList(const mwArray& mw_ncsPktList) {
-    // transform obtained byte arrays to raw packet and send
-
-    size_t cpsPktCount = mw_ncsPktList.NumberOfElements();
-
-    if (cpsPktCount != 0) {
-        // mw_cpsPktList with packets to send to a certain node should be a
-        // cpsPktCount-by-1 cell array (column-vector like)
-        ASSERT(mw_ncsPktList.NumberOfDimensions() == 2);
-        ASSERT((size_t ) mw_ncsPktList.GetDimensions()(1) == cpsPktCount);
-        ASSERT((size_t ) mw_ncsPktList.GetDimensions()(2) == 1);
-        ASSERT(mw_ncsPktList.ClassID() == mxCELL_CLASS);
-
-        for (uint32_t pktNum = 0; pktNum < cpsPktCount; pktNum++) {
-            sendNcsPkt(mw_ncsPktList(pktNum + 1));
-        }
-    }
+    send(msg, (*NCS_NAMES[NCTXCI_CONTROLLER] + "$o").c_str());
 }
 
 NcsContextComponentIndex NcsContext::getIndexForAddr(const L3Address &addr) {
@@ -516,4 +578,3 @@ NcsContextComponentIndex NcsContext::getIndexForAddr(const L3Address &addr) {
 
     return NCTXCI_COUNT;
 }
-

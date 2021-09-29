@@ -16,6 +16,7 @@
 package libncs_omnet.util;
 
 import libncs_omnet.util.ITransportApp;
+import libncs_omnet.util.ITrafGen;
 import libncs_omnet.util.GenericTrafGen;
 
 //
@@ -32,7 +33,7 @@ module TrafGenApp like ITransportApp
         redir: PacketRedirector {
             @display("p=184,125");
         }
-        gen: GenericTrafGen {
+        gen: <default("GenericTrafGen")> like ITrafGen {
             @display("p=184,42");
         }
 

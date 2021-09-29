@@ -21,10 +21,15 @@
 cplusplus {{
     #include <inet/networklayer/common/L3Address.h>
     
+    #include "CoCC/CoCCTranslator.h"
+    #include "NcsContext.h"
+    
     typedef inet::L3Address L3Address_t;
 }};
 
 class noncobject L3Address_t;
+class noncobject ICoCCTranslatorPtr;
+class noncobject NcsContextComponentIndex;
 
 // Connection request of a CPS within a NCS
 message NcsConnReq {
@@ -35,4 +40,23 @@ message NcsConnReq {
 message NcsSendData {
     L3Address_t srcAddr;
     L3Address_t dstAddr;
+}
+
+// Set CoCC translator pointer in transport layer
+message NcsSetTranslator {
+    L3Address_t dstAddr;
+    ICoCCTranslatorPtr translator;
+    NcsContextComponentIndex role;
+}
+
+// Notify about start of stream
+message NcsStreamStartInfo {
+    L3Address_t dstAddr;
+    simtime_t start;
+}
+
+// Notify about stop of stream
+message NcsStreamStopInfo {
+    L3Address_t dstAddr;
+    simtime_t stop;
 }

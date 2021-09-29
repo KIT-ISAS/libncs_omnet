@@ -26,7 +26,10 @@ using namespace inet;
 
 enum NcspCpsAppMessageKind_t {
     CpsConnReq = 2300,
-    CpsSendData
+    CpsSendData,
+    CpsTranslator,
+    CpsStreamStart,
+    CpsStreamStop
 };
 
 class NcsCpsApp: public cSimpleModule {
@@ -47,10 +50,6 @@ private:
     cGate * ctxOut;
     cGate * transportIn;
     cGate * transportOut;
-
-    // statistical data
-    simsignal_t interArrivalTimeSignal;
-    simtime_t lastPktTime = SimTime::ZERO;
 };
 
 #endif

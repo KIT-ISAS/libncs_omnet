@@ -18,9 +18,11 @@
 
 #include <omnetpp.h>
 
+#include <memory>
+
 #include <inet/transportlayer/contract/udp/UDPSocket.h>
 
-#include "TransportCtrlMsg_m.h"
+#include "TransportCtrlMsg.h"
 
 using namespace omnetpp;
 using namespace inet;
@@ -37,7 +39,7 @@ class UDPTransport : public cSimpleModule {
   protected:
     // types
     struct SocketHandle_t {
-        UDPSocket * socket;
+        std::shared_ptr<UDPSocket> socket;
 
         bool listening;
         bool connected;

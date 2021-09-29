@@ -42,12 +42,22 @@ void GenericTrafGen::initialize() {
     numPackets = par("numPackets");
     startTimePar = &par("startTime");
     stopTimePar = &par("stopTime");
+    packetLengthPar = &par("packetLength");
+    sendIntervalPar = &par("sendInterval");
+
+    jitterStddev = par("jitterStddev");
+    jitterMin = par("jitterMin");
+    jitterMax = par("jitterMax");
+    jitterMultiplicative = par("jitterMultiplicative");
+    jitterAdditive = par("jitterAdditive");
+
+    jitterAccumulator = (jitterMin + jitterMax) / 2;
 
     startTime = startTimePar->doubleValue();
     stopTime = -1; // updated at startTime
 
-    packetLengthPar = &par("packetLength");
-    sendIntervalPar = &par("sendInterval");
+    cycle = &par("cycle");
+    cycleStart = &par("cycleStart");
 
     numSent = 0;
     numReceived = 0;
@@ -66,7 +76,9 @@ void GenericTrafGen::startApp() {
 
 void GenericTrafGen::handleMessage(cMessage *msg) {
     if (msg == timer) {
-        sendPacket();
+        if (msg->getKind() != STOP) {
+            sendPacket();
+        }
 
         if (isEnabled()) {
             scheduleNextPacket(simTime());
@@ -111,29 +123,61 @@ void GenericTrafGen::scheduleNextPacket(simtime_t previous) {
         next = simTime() <= startTime ? startTime : simTime();
         timer->setKind(START);
     } else { // regular operation
-        if (timer->getKind() == START) {
+        switch (timer->getKind()) {
+        case START:
+            *cycleStart = startTime.dbl(); // memorize new cycle start
             stopTime = stopTimePar->doubleValue();
             timer->setKind(NEXT);
+            // fall through
+        case NEXT: {
+            double interval = sendIntervalPar->doubleValue();
+            const double noise = jitterStddev > 0 ? normal(0, jitterStddev) : 0;
+
+            jitterAccumulator += noise;
+            jitterAccumulator = std::max(jitterMin, std::min(jitterMax, jitterAccumulator));
+
+            const double additive = jitterAdditive * jitterAccumulator;
+            const double multiplicative = jitterMultiplicative * jitterAccumulator;
+
+            if (interval > 1E-18) {
+                const double freq = 1 / interval * (1 + multiplicative) + additive;
+
+                if (freq > 0) {
+                    interval = 1 / freq;
+                }
+            }
+
+            next = previous + interval;
+            } break;
+        case STOP: // called at stopTime
+            *cycle = cycle->intValue() + 1; // increment cycle counter
+            startTime = startTimePar->doubleValue(); // fetch new startTime
+
+            // re-triggering requested
+            if (startTime >= stopTime) {
+                next = startTime;
+                stopTime = -1; // ensure the event is scheduled again
+                timer->setKind(START); // causes stopTime to be re-read at next trigger
+            } else {
+                return; // do not schedule again
+            }
+            break;
+        default:
+            ASSERT(false);
         }
 
-        next = previous + sendIntervalPar->doubleValue();
+
     }
 
     // end of burst, prepare for re-triggering
     if (stopTime >= SIMTIME_ZERO && next >= stopTime) {
-        startTime = startTimePar->doubleValue(); // fetch new startTime
-        stopTime = -1; // ensure the event is scheduled again
-        timer->setKind(START); // causes stopTime to be re-read at next trigger
+        timer->setKind(STOP);
 
-        // computed time for next packet is outside next sequence time frame?
-        // if yes, re-adjust to beginning of time frame
-        if (startTime > next || (stopTime >= SIMTIME_ZERO && next >= stopTime)) {
-            next = simTime() <= startTime ? startTime : simTime(); // only allow legal startTime values
-        }
+        next = stopTime;
     }
 
     // schedule next packet
-    if (stopTime < SIMTIME_ZERO || next < stopTime) {
+    if (stopTime < SIMTIME_ZERO || next <= stopTime) {
         scheduleAt(next, timer);
     }
 }
@@ -151,7 +195,7 @@ void GenericTrafGen::sendPacket() {
 
     sprintf(msgName, "appData-%d", numSent);
 
-    const long packetLength = packetLengthPar->longValue();
+    const long packetLength = packetLengthPar->intValue();
     cPacket *payload;
 
     if (generateRaw) {

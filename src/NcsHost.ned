@@ -18,27 +18,61 @@ package libncs_omnet;
 import inet.node.inet.NodeBase;
 import inet.transportlayer.contract.ITCP;
 import inet.transportlayer.contract.IUDP;
+import libncs_omnet.FCP.contract.IFCP;
+import libncs_omnet.CoCC.CoCCUDPTransport;
+import libncs_omnet.OracleCC.OracleCCUDPTransport;
+import libncs_omnet.simpleCC.simpleCCUDPTransport;
 import libncs_omnet.util.GenericTransportHost;
 import libncs_omnet.util.TCPTransport;
 import libncs_omnet.util.UDPTransport;
+import libncs_omnet.util.FCPTransport;
 
 
 module NcsHost extends GenericTransportHost
 {
     parameters:
-        @display("bgl=2;i=device/device;bgb=634,469");
+        @display("bgl=2;i=device/device;bgb=791,469");
+
+        bool useCoCC = default(false);
+        bool useOracleCC = default(false);
+        bool useSimpleCC = default(false);
+
+        networkLayer.serumSupportEnabled = default(useCoCC || useFcp || useOracleCC || useSimpleCC);
 
     gates:
         inout context;
 
+    types:
+
     submodules:
         cps: NcsCpsApp {
-            @display("p=329,69");
+            @display("p=329,50");
+        }
+
+        coCC: CoCCUDPTransport if useCoCC {
+            @display("p=536,142");
+        }
+
+        oracleCC: OracleCCUDPTransport if useOracleCC {
+            @display("p=632,142");
+        }
+        simpleCC: simpleCCUDPTransport if useSimpleCC {
+            @display("p=738,142");
         }
 
     connections:
         tcpTransport.up <--> cps.transport if useTcp;
-        udpTransport.up <--> cps.transport if useUdp;
+        fcpTransport.up <--> cps.transport if useFcp;
+        udpTransport.up <--> cps.transport if useUdp && !useCoCC && !useOracleCC && !useSimpleCC;
+        coCC.up <--> cps.transport if useUdp && useCoCC;
+        coCC.udpIn <-- udp.appOut++ if useUdp && useCoCC;
+        coCC.udpOut --> udp.appIn++ if useUdp && useCoCC;
+        oracleCC.up <--> cps.transport if useUdp && useOracleCC;
+        oracleCC.udpIn <-- udp.appOut++ if useUdp && useOracleCC;
+        oracleCC.udpOut --> udp.appIn++ if useUdp && useOracleCC;
+        simpleCC.up <--> cps.transport if useUdp && useSimpleCC;
+        simpleCC.udpIn <-- udp.appOut++ if useUdp && useSimpleCC;
+        simpleCC.udpOut --> udp.appIn++ if useUdp && useSimpleCC;
 
         cps.context <--> context;
 

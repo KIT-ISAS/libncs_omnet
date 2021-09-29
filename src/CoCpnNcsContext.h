@@ -17,30 +17,147 @@
 #define __LIBNCS_OMNET_COCPNNCSCONTEXT_H_
 
 #include <omnetpp.h>
-#include <NcsContext.h>
-#include <libncs_matlab.h>
+
+#include "NcsContext.h"
+#include "CoCC/CoCCTranslator.h"
 
 using namespace omnetpp;
+using namespace inet;
 
-class CoCpnNcsContext : public NcsContext
-{
+// forward declaration
+class AbstractCoCpnNcsImpl;
+
+class CoCpnNcsContext : public NcsContext, public ICoCCTranslator {
+  public:
+    virtual ~CoCpnNcsContext() { };
+
   protected:
-    virtual std::vector<const char *> getConfigFieldNames() override;
-    virtual void setConfigValues(mwArray &cfgStruct) override;
+    virtual void initialize(const int stage) override;
+    virtual void finish() override;
+
+    virtual void postNetworkInit() override;
+    virtual void postConnect(const NcsContextComponentIndex to) override;
+
+  public:
+
+    struct CoCpnNcsControlStepResult : public NcsContext::NcsControlStepResult {
+        double reportedQoC;
+    };
+
+    struct CoCpnNcsParameters : public NcsContext::NcsParameters {
+        bool ignoreDeadband = false;
+        bool useSampledDelayProbs;
+        cPar* samplingInterval;
+        cPar* scDelayProbs;
+        cPar* caDelayProbs;
+        cPar* controllerEventBased;
+        cPar* controllerEventTrigger;
+        cPar* controllerDeadband;
+        cPar* sensorEventBased;
+        cPar* sensorMeasDelta;
+        cPar* translatorFile;
+    };
+
+    typedef NcsContext::NcsSignals CoCpnNcsSignals;
+
+    virtual CoCpnNcsParameters* getParameters() override;
+    virtual CoCpnNcsSignals* getSignals() override;
+
+  protected:
+
+    virtual CoCpnNcsParameters* createParameters(NcsContext::NcsParameters * const parameters = nullptr) override;
+    virtual CoCpnNcsSignals* createSignals(NcsContext::NcsSignals * const signals = nullptr) override;
+    virtual CoCpnNcsControlStepResult* createControlStepResult() override;
+
+    virtual AbstractNcsImpl* createNcsImpl(const std::string name) override;
+    virtual void processControlStepResult(const simtime_t& ncsTime, const NcsControlStepResult * const result) override;
 
   private:
-    static const char CTRL_SEQ_LEN[];
-    static const char MAX_CTRL_SEQ_DELAY[];
-    static const char MAX_MEAS_DELAY[];
-    static const char SAMPL_INTERVAL[];
-    static const char SC_DELAY_PROBS[];
-    static const char CA_DELAY_PROBS[];
+    AbstractCoCpnNcsImpl* ncs();
 
-    static const char CTRL_EVT_BASED[];
-    static const char CTRL_EVT_DEADBAND[];
-    static const char CTRL_EVT_TRIGGER[];
-    static const char SENSOR_EVT_BASED[];
-    static const char SENSOR_EVT_DELTA[];
+  public:
+    virtual simtime_t getControlPeriod();
 
+    virtual void setControlObserver(ICoCCTranslator::IControlObserver * const observer, void * const context = nullptr) override;
+
+    virtual double getActualQM() override;
+    virtual double getTargetQM() override;
+    virtual void setTargetQM(const double targetQoC) override;
+
+    virtual long getPayloadSize() override;
+    virtual long getPerPacketOverhead() override;
+    virtual void setPerPacketOverhead(const long packetOverhead) override;
+    virtual long getNetworkOverhead() override;
+    virtual void setNetworkOverhead(const long networkOverhead) override;
+
+    virtual double getMaxRate() override;
+
+    virtual ICoCCTranslator::CoCCLinearization getLinearizationForRate(const double actualQM, const double targetQM) override;
+    virtual double getRateForQM(const double actualQM, const double targetQM) override;
+    virtual double getQMForRate(const double actualQM, const double rate) override;
+    virtual double getAvgFrequencyForQM(const double actualQM, const double targetQM) override;
+
+  protected:
+    double qocToQM(const double qoc);
+    double qmToQoC(const double qm);
+
+    friend class RateAdjustment;
+    class RateAdjustment : public ICoCCTranslator::RateFunction {
+    public:
+        RateAdjustment(CoCpnNcsContext * const parent);
+        virtual ~RateAdjustment() {};
+
+    protected:
+        virtual double eval(const double targetQM) const;
+
+        CoCpnNcsContext * const parent;
+    };
+
+  protected:
+
+    //
+    // Variables
+    //
+
+    long perPacketOverhead = 0;
+    long networkOverhead = 0;
+    double actualQoC = 0;
+    double targetQM = 1; // assumed to be initial default
+    ICoCCTranslator::IControlObserver * observer = nullptr;
+    void * observerContext = nullptr;
+
+    double avgPayloadSize = 0;
+    long payloadSizeSamples = 0;
+    long lastPayloadSize = 0;
+
+    // statistical data
+
+    simsignal_t reportedQoC;
+    simsignal_t reportedQM;
+    simsignal_t targetQoCSignal;
+    simsignal_t targetQMSignal;
+    simsignal_t sPayloadSize;
+
+  protected:
+
+    //
+    // parameters
+    //
+
+    long payloadSize;
+    bool autoPayloadSize;
+    bool useSampledDelayProbs;
+
+    double factor;
+    double offset;
 };
+
+class AbstractCoCpnNcsImpl : virtual public AbstractNcsImpl {
+  public:
+    virtual ~AbstractCoCpnNcsImpl() { };
+
+    virtual void setTargetQoC(const double qoc) = 0;
+    virtual const ICoCCTranslator::RateFunction& getRateFunction() = 0;
+};
+
 #endif

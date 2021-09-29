@@ -17,7 +17,7 @@
 
 #include "UDPHandshakePkt_m.h"
 
-#include <inet/common/RawPacket.h>
+#include <NcsCpsApp.h>
 
 Define_Module(UDPTransport);
 
@@ -26,7 +26,10 @@ UDPTransport::UDPTransport() {
 }
 
 UDPTransport::~UDPTransport() {
-
+    // connectionVect contains each created handle, even the listening one
+    for (auto handle : connectionVect) {
+        delete handle;
+    }
 }
 
 void UDPTransport::initialize() {
@@ -58,6 +61,7 @@ void UDPTransport::handleMessage(cMessage * const msg) {
                     info->setSrcPort(ctrl->getSrcPort());
                     info->setDstAddr(ctrl->getDestAddr());
                     info->setDstPort(ctrl->getDestPort());
+                    info->setNetworkOptions(ctrl->replaceNetworkOptions());
 
                     msg->setControlInfo(info);
 
@@ -91,7 +95,17 @@ void UDPTransport::handleMessage(cMessage * const msg) {
                     handle->port = ctrl->getSrcPort();
                     handle->connected = true;
 
-                    delete msg;
+                    // confirm connection to upper layer
+                    auto conf = new TransportConnectReq();
+
+                    msg->setName("Connection confirmation");
+                    msg->setKind(CpsConnReq);
+
+                    conf->setDstAddr(handle->remote);
+                    conf->setDstPort(handle->port);
+                    msg->setControlInfo(conf);
+
+                    send(msg, upOut);
                 }
             }
 
@@ -104,7 +118,7 @@ void UDPTransport::handleMessage(cMessage * const msg) {
 
             ASSERT(ctrl);
 
-            EV_WARN << "UDP error indication: " << ctrl->info() << endl;
+            EV_WARN << "UDP error indication: " << ctrl->str() << endl;
 
             delete ctrl;
             delete msg;
@@ -161,7 +175,7 @@ void UDPTransport::handleMessage(cMessage * const msg) {
             if (req == nullptr) {
                 throw cRuntimeError("handleMessage(): expected TransportDataInfo control info in message.");
             }
-            ASSERT(dynamic_cast<RawPacket *>(msg));
+            ASSERT(dynamic_cast<cPacket *>(msg));
 
             SocketHandle_t * const handle = getSocketByAddr(req->getDstAddr(), req->getDstPort());
 
@@ -169,7 +183,11 @@ void UDPTransport::handleMessage(cMessage * const msg) {
                 ASSERT(req->getDstAddr() == handle->remote);
 
                 if (handle->connected) {
-                    handle->socket->sendTo(dynamic_cast<RawPacket *>(msg), handle->remote, handle->port);
+                    inet::UDPSocket::SendOptions opts;
+
+                    opts.networkOptions = req->replaceNetworkOptions();
+
+                    handle->socket->sendTo(dynamic_cast<cPacket *>(msg), handle->remote, handle->port, &opts);
                 } else {
                     EV_WARN << "Connection to " << req->getDstAddr() << " is not established yet. Dropping message: " << msg << endl;
 
@@ -183,11 +201,9 @@ void UDPTransport::handleMessage(cMessage * const msg) {
 
             delete req;
         } else {
-            const char * const name = msg->getName();
+            EV_WARN << "Received message with unknown control info type, ignoring: " << msg << endl;
 
             delete msg;
-
-            throw cRuntimeError("Received message with unknown control info type: %s", name);
         }
     } else if (msg->isSelfMessage()) {
         // Timeout-Ticker
@@ -213,7 +229,7 @@ void UDPTransport::handleMessage(cMessage * const msg) {
 UDPTransport::SocketHandle_t* UDPTransport::createSocket() {
     SocketHandle_t * const handle = new SocketHandle_t();
 
-    handle->socket = new UDPSocket();
+    handle->socket.reset(new UDPSocket());
     handle->socket->setOutputGate(udpOut);
 
     return handle;
@@ -236,7 +252,7 @@ void UDPTransport::storeSocket(SocketHandle_t * const handle) {
     // may fail for incoming connections tied to the listen socket
     // thats ok, we use the map in first place to retrieve the listen socket or
     // to check if a socket context has been established. thus no assert here
-    auto mapResult = connectionMap.insert(SocketMap_t::value_type(handle->socket->getSocketId(), handle));
+    connectionMap.insert(SocketMap_t::value_type(handle->socket->getSocketId(), handle));
 
     connectionVect.insert(connectionVect.end(), handle);
 }

@@ -13,24 +13,13 @@
 // along with this program.  If not, see http://www.gnu.org/licenses/.
 // 
 
-#ifndef __LIBNCS_OMNET_NCSMANAGER_H_
-#define __LIBNCS_OMNET_NCSMANAGER_H_
+package libncs_omnet.util;
 
-#include <omnetpp.h>
-
-
-using namespace omnetpp;
-
-
-class NcsManager: public cSimpleModule {
-public:
-    NcsManager();
-    virtual ~NcsManager();
-
-protected:
-    virtual int numInitStages() const;
-    virtual void initialize(const int stage);
-    virtual void handleMessage(cMessage * const msg);
-};
-
-#endif
+moduleinterface ITrafGen
+{
+    parameters:
+        @display("i=block/source");
+        
+    gates:
+        inout io;
+}

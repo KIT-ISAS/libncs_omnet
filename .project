@@ -5,6 +5,7 @@
 	<projects>
 		<project>inet</project>
 		<project>libncs_matlab</project>
+		<project>matlab-scheduler</project>
 	</projects>
 	<buildSpec>
 		<buildCommand>

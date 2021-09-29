@@ -15,7 +15,7 @@
 
 #include "PacketRedirector.h"
 
-#include "TransportCtrlMsg_m.h"
+#include "TransportCtrlMsg.h"
 
 #include <inet/common/InitStages.h>
 #include <inet/networklayer/common/L3AddressResolver.h>
@@ -59,20 +59,13 @@ void PacketRedirector::initialize(const int stage) {
         }
 
         if (connectPort > 0) {
-            L3AddressResolver().tryResolve(connectAddress.c_str(), connectL3Addr);
+            if (tOpen != SIMTIME_ZERO) {
+                cMessage * const msg = new cMessage("PacketRedirector tOpen delay");
 
-            if (connectL3Addr.isUnspecified()) {
-                error(("Unable to resolve address for " + connectAddress).c_str());
+                scheduleAt(tOpen, msg);
+            } else {
+                initiateConnection();
             }
-
-            cMessage * const msg = new cMessage(("PacketRedirector connect to " + connectAddress + ":" + std::to_string(connectPort)).c_str());
-            TransportConnectReq * const cmsg = new TransportConnectReq();
-
-            cmsg->setDstAddr(connectL3Addr);
-            cmsg->setDstPort(connectPort);
-            msg->setControlInfo(cmsg);
-
-            sendDelayed(msg, tOpen, downOut);
         }
 
         break; }
@@ -80,6 +73,14 @@ void PacketRedirector::initialize(const int stage) {
 }
 
 void PacketRedirector::handleMessage(cMessage * const msg) {
+    if (msg->isSelfMessage()) {
+        initiateConnection();
+
+        delete msg;
+
+        return;
+    }
+
     if (simTime() <= tOpen || (tClose >= 0 && simTime() >= tClose)) {
         EV << "Closed. Dropping msg " << msg << endl;
 
@@ -114,4 +115,29 @@ void PacketRedirector::handleMessage(cMessage * const msg) {
     } else {
         error("Unable to handle message from unknown source.");
     }
+}
+
+void PacketRedirector::initiateConnection() {
+    L3AddressResolver().tryResolve(connectAddress.c_str(), connectL3Addr,
+            L3AddressResolver::ADDR_IPv4 | L3AddressResolver::ADDR_IPv6);
+
+    if (connectL3Addr.isUnspecified()) {
+        error(("Unable to resolve address for " + connectAddress).c_str());
+    }
+
+    if (connectL3Addr.isLinkLocal()) {
+        error("Network was not fully set up during initialization, PacketRedirector is unable to operate. "
+                "Choose parameter tOpen sufficiently large such that all hosts got an network address assigned");
+    }
+
+    cMessage* const msg = new cMessage(
+            ("PacketRedirector connect to " + connectAddress + ":"
+                    + std::to_string(connectPort)).c_str());
+    TransportConnectReq* const cmsg = new TransportConnectReq();
+
+    cmsg->setDstAddr(connectL3Addr);
+    cmsg->setDstPort(connectPort);
+    msg->setControlInfo(cmsg);
+
+    send(msg, downOut);
 }

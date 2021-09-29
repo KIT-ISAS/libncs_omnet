@@ -1,6 +1,1 @@
-inet.examples.emulation
-inet.transportlayer.tcp_lwip
-inet.applications.voipstream
-inet.linklayer.ext
-inet.transportlayer.tcp_nsc
-inet.examples.voipstream
+libncs_omnet.NSC

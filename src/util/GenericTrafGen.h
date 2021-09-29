@@ -30,7 +30,7 @@ using namespace omnetpp;
 class GenericTrafGen : public cSimpleModule, public ILifecycle
 {
   protected:
-    enum Kinds { START = 100, NEXT };
+    enum Kinds { START = 100, NEXT, STOP };
 
     // parameters: see the NED files for more info
     bool generateRaw;
@@ -41,6 +41,17 @@ class GenericTrafGen : public cSimpleModule, public ILifecycle
     cPar *sendIntervalPar = nullptr;
     cPar *packetLengthPar = nullptr;
     int numPackets = 0;
+
+    double jitterStddev;
+    double jitterMin;
+    double jitterMax;
+    double jitterMultiplicative;
+    double jitterAdditive;
+
+    double jitterAccumulator;
+
+    cPar *cycle;
+    cPar *cycleStart;
 
     // gates
     cGate * inGate;

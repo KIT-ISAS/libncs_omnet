@@ -29,8 +29,10 @@ simple TCPTransport like ITCPApp
     parameters:
         @display("i=block/wheelbarrow");
 
+        // selects if data is forwarded as cPacket objects or as raw bytestream
+        bool bytestreamService = default(false);
         // Enables a datagram-style behavior instead of the standard data-stream interface.
-        // If datagramService is set to true, a small additional header is wrapped around each chunk of data.
+        // If datagramService AND bytestreamService is set to true, a small additional header is wrapped around each chunk of data.
         bool datagramService = default(false);
 
     gates:

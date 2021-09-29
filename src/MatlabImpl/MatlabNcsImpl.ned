@@ -13,12 +13,13 @@
 // along with this program.  If not, see http://www.gnu.org/licenses/.
 // 
 
-package libncs_omnet;
+package libncs_omnet.MatlabImpl;
 
 //
-// TODO auto-generated module
+// Implementation of a adaptor to a MATLAB-based NCS instance
 //
-simple NcsManager
+simple MatlabNcsImpl
 {
-    @display("i=old/telnet");
+    @class(MatlabNcsImpl);
+    @display("i=block/segm");
 }

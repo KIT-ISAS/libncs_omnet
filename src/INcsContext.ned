@@ -25,13 +25,35 @@ moduleinterface INcsContext
     parameters:
         @display("i=block/cogwheel");
         
+        //
+        // NcsContext configuration
+        //
+        
+        // Polling interval used to determine wether the OMNeT++/INET networking 
+        // stack has finished initialization. A positive value will be required
+        // if hosts do get their IP addresses pre-assigned during initialization.
+        // NcsContext will try to initiate connections between NCS hosts at the 
+        // given polling interval.
+        double networkStartupPollInterval @unit(s);
         // Delay before starting to poll the NCS control loop.
         // Allows network components to initialize and establish state/connections 
         // before the NCS starts to communicate.
         double startupDelay @unit(s);
-        // Absolute or relative path to a file which configures the NCS in MATLAB.
-        // This might be a .mat file or something else which is parsed by the MATLAB model.
+        // Determines what should be done if the controller signals an error condition,
+        // e.g. in case the plant is in a not admissible state.
+        // 0: ignore (default), 1: stop simulation gracefully, 2: abort simulation with exception
+        int actionOnControllerFailure;
+        
+        //
+        // NcsImpl configuration
+        //
+        // default values are configured to "do not set/change defaults"
+        //
+
+        // Absolute or relative path to a file which configures the NCS.
+        // See the configured NCS implementation for details.
         string configFile;
+        
     gates:
         inout actuator;
         inout controller;

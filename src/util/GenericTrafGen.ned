@@ -15,6 +15,8 @@
 
 package libncs_omnet.util;
 
+import libncs_omnet.util.ITrafGen;
+
 //
 // A generic traffic generator module, which is capable of generating either
 // simple packets or RawPackets. Derived from inet/applications/generic/IPvXTrafGen.
@@ -24,7 +26,7 @@ package libncs_omnet.util;
 // provided before stopTime has been reached. Both values will always be fetched
 // in an alternating manner, at startTime, stopTime is fetched, and vice versa.
 //
-simple GenericTrafGen
+simple GenericTrafGen like ITrafGen
 {
     parameters:
         @display("i=block/source");
@@ -41,6 +43,26 @@ simple GenericTrafGen
         int numPackets = default(-1); 
         // packet length in bytes
         volatile int packetLength @unit("B"); 
+        
+        // jitter is only effective if sendInterval > 1E-18s
+        // brown noise jitter, standard deviation. 0 = off
+        double jitterStddev = default(0);
+        // brown noise jitter, lower limit. should be centered around 0
+        double jitterMin = default(0);
+        // brown noise jitter, upper limit. should be centered around 0
+        double jitterMax = default(0);
+        // multiplicative jitter term. increases or decreases strength relative to jitterAdditive
+        double jitterMultiplicative = default(1);
+        // additive jitter term, in Hz! note: added to 1/sendInterval to permit direct adjustments of the sending rate
+        double jitterAdditive @unit("Hz") = default(0);
+        
+        // variables which are set during operation and may be used within startTime, stopTime and sendInterval computations
+        // cycle counter, incremented each time stopTime has been reached. updated before startTime is evaluated again
+        int cycle = 0;
+        // start time of the current cycle, adjusted when startTime has been reached
+        double cycleStart @unit("s") = 0s;
+        // random number chosen once per instance
+        double randVal = uniform(0, 1);
 
         @signal[sentPk](type=cPacket);
         @signal[rcvdPk](type=cPacket);

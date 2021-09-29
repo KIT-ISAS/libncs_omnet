@@ -13,7 +13,8 @@
 // along with this program.  If not, see http://www.gnu.org/licenses/.
 // 
 
-#include <cRandomizedChannel.h>
+#include "cRandomizedChannel.h"
+
 #include <omnetpp/cstringtokenizer.h>
 #include <omnetpp/cexception.h>
 
@@ -137,7 +138,7 @@ void cRandomizedChannel::rereadPars() {
     }
     // warn if normalization is required
     if (fabs(sum - 1.0) > EPSILON) {
-        EV << "WARNING: Sum of PDF elements != 1.0. They will be considered as weights and normalized accordingly";
+        EV << "WARNING: Sum of PDF elements != 1.0. They will be considered as weights and normalized accordingly" << endl;
     }
     // these two also enforced the existence of at least one token
 

@@ -21,7 +21,7 @@
 #include <inet/transportlayer/contract/tcp/TCPSocket.h>
 #include <inet/common/ByteArray.h>
 
-#include "TransportCtrlMsg_m.h"
+#include "TransportCtrlMsg.h"
 
 using namespace omnetpp;
 using namespace inet;
@@ -59,6 +59,7 @@ class TCPTransport : public cSimpleModule, public TCPSocket::CallbackInterface {
     typedef std::map<int, SocketHandle_t *> SocketMap_t;
 
     // params
+    bool bytestreamService;
     bool datagramService;
 
     // variables
@@ -68,7 +69,7 @@ class TCPTransport : public cSimpleModule, public TCPSocket::CallbackInterface {
     cGate *upOut;
 
     bool listening = false;
-    SocketMap_t connectionMap; // ConnId --> SocketHandle_t;
+    SocketMap_t connectionMap; // ConnId --> SocketHandle_t*;
 
     // socket management methods
     SocketHandle_t* createSocket(cMessage * const msg = nullptr);

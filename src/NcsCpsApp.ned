@@ -27,9 +27,6 @@ simple NcsCpsApp like ITransportApp {
     parameters:
         @display("i=block/plug");
         
-        @signal[inter_arrival_t](type="simtime_t");
-        @statistic[inter_arrival_time](source=inter_arrival_t;title="Inter-arrival time";record=stats,vector?;interpolationmode=none);
-        
         // If true, this CPS will start to listen at connectPort
         bool doListen = default(false);
         // The port to which this CPS will connect in case of outbound 

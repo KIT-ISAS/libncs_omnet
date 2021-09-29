@@ -1,0 +1,105 @@
+Gegeben: MaximaleDatenrate, Link->AnzahlNutzer
+
+
+
+Stau:
+
+// statt erste for, eventuell auch erst bei eingang einer nachricht / selbstNachricht
+// if eventuell auch als switch konstruktion mit default case stau?
+for all links 
+	if (aktuelleDatenrate > MaximaleDatenrate)
+		differenz = (aktuelleDatenrate - MaximaleDatenrate) / MaximaleDatenrate;
+		multiplicator = 1 - 2* differenz, Minimum 1/2
+		
+			for all linkUser
+  			neue Rate = alteRate * multiplicator;
+			paketRate = bestimmePaketRate(neue Rate);
+			neue qm = qocToQM( CLAMP ( NCS_GetQoCForRate(paketRate)));
+			sendeÄnderungsNachricht;
+					end for
+	end if
+sende selbstNachricht		
+end for
+
+
+
+
+Halbe Last:
+// erhöhe datenrate jedes users des link um 50% seines anteils, prozentzahl variabel
+for all links
+	if(aktuelleDatenrate <= MaximaleDatenrate * 0.8)
+	freieDatenRate = berechneFreieDatenRate();
+	freiePaketRate = bestimmePaketRate(freieDatenRate); // glatte Zahl
+	paketRateProNutzer = abrunden( 0.5* freiePaketRate / AnzahlNutzer), minimum 1
+	for all linkUser
+		neue Pakterate = altePaketRate + paketRateProNutzer;
+		QOC = NCS_GetQoCForRate(paketRateProNutzer);
+		CLAMP(QOC);
+		qm = qocToQM(QOC);
+		sendeÄnderungsNachricht
+	end for
+	end if
+sende selbstNachricht
+end for
+
+
+
+
+nahe Volllast  1:
+// erhöhe für alle Links qoc um 1 Paket, wenn es keinen stau erzeugt, ansonsten tue nichts, schlechte fairness?
+for all links
+	if(aktuelleDatenrate > MaximaleDatenrate * 0.8   &&   aktuelleDatenrate < MaximaleDatenrate)
+	freieDatenRate = berechneFreieDatenRate();
+	freiePaketRate = bestimmePaketRate(freieDatenRate); // glatte Zahl
+	if (freiePaketRate > anzahlNutzer)
+		for all linkUser
+		neue Pakterate = altePaketRate + 1;
+		QOC = NCS_GetQoCForRate(paketRateProNutzer);
+		CLAMP(QOC);
+		qm = qocToQM(QOC);
+		sendeÄnderungsNachricht
+	end for
+	end if
+	end if
+sende selbstNachricht
+end for
+
+
+
+nahe Volllast 2:
+// erhöhe für alle Links qoc um 1 paket, egal ob es für die nächste rtt stau erzeugt
+for all links
+	if(aktuelleDatenrate > MaximaleDatenrate * 0.8   &&   aktuelleDatenrate < MaximaleDatenrate)
+	for all linkUser
+		neue Pakterate = altePaketRate + 1;
+		QOC = NCS_GetQoCForRate(paketRateProNutzer);
+		CLAMP(QOC);
+		qm = qocToQM(QOC);
+		sendeÄnderungsNachricht
+	end for
+	end if
+sende selbstNachricht
+end for
+
+
+
+nahe Volllast 3:
+// erhöhe nur die Rate des / der niedrigsten Nutzer(s)
+for all links
+	if(aktuelleDatenrate > MaximaleDatenrate * 0.8   &&   aktuelleDatenrate < MaximaleDatenrate)
+	link = finde Link mit niedrigster Rate;
+	freieDatenRate = berechneFreieDatenRate();
+	freiePaketRate = bestimmePaketRate(freieDatenRate); // glatte Zahl
+	if (freiePaketRate > anzahlNutzer)
+	if (link)
+		neue Pakterate = altePaketRate + anzahlNutzer;
+		QOC = NCS_GetQoCForRate(alte Paketrate + 1);
+		CLAMP(QOC);
+		qm = qocToQM(QOC);
+		sendeÄnderungsNachricht
+	end if
+	end if
+sende selbstNachricht
+end for
+
+
