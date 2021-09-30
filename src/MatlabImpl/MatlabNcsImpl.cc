@@ -147,30 +147,48 @@ void MatlabNcsImpl::doControlStep(const simtime_t& ncsTime, NcsContext::NcsContr
     mwArray mw_scDelays = mw_ncsStats("sc_delays", 1, 1);
     mwArray mw_caDelays = mw_ncsStats("ca_delays", 1, 1);
     mwArray mw_acDelays = mw_ncsStats("ac_delays", 1, 1);
-    const size_t scCount = mw_scDelays.NumberOfElements();
-    const size_t caCount = mw_caDelays.NumberOfElements();
-    const size_t acCount = mw_acDelays.NumberOfElements();
 
-    for (size_t i = 1; i <= scCount; i++) {
-        context->emit(signals->scObservedDelaySignal, static_cast<uint64_t>(mw_scDelays(i)) * controlPeriod);
-    }
-    for (size_t i = 1; i <= caCount; i++) {
-        context->emit(signals->caObservedDelaySignal, static_cast<uint64_t>(mw_caDelays(i)) * controlPeriod);
-    }
-    for (size_t i = 1; i <= acCount; i++) {
-        context->emit(signals->acObservedDelaySignal, static_cast<uint64_t>(mw_acDelays(i)) * controlPeriod);
+    // report observed delays
+    const simtime_t now = simTime();
+
+    for (auto evt : pktEvts) {
+        context->emit(evt.signal, now - evt.sent);
     }
 
+    pktEvts.clear();
+
+    // prepare generated pkts to be sent to network
     parseMatlabPktList(mw_ncsPktList, result->pkts);
 }
 
 std::vector<NcsContext::NcsPkt> MatlabNcsImpl::handlePacket(const simtime_t& ncsTime, NcsContext::NcsPkt& ncsPkt) {
+    // track received pkts to report observed delay
+    RcvdPktEvt evt;
+
+    evt.sent = ncsPkt.pkt->getCreationTime();
+
+    if (ncsPkt.dst == NCTXCI_ACTUATOR) {
+        evt.signal = signals->caObservedDelaySignal;
+    } else if (ncsPkt.dst == NCTXCI_CONTROLLER) {
+        if (!ncsPkt.isAck) {
+            // regular data packet from sensor to controller
+            evt.signal = signals->scObservedDelaySignal;
+        } else {
+            // ACK packet sent back from actuator
+            evt.signal = signals->acObservedDelaySignal;
+        }
+    }
+
+    pktEvts.push_back(evt);
+
+    // forward received pkt to MATLAB
     mwArray mw_ncsPktList;
     mwArray mw_timestamp(ncsTime.inUnit(SIMTIME_PS));
     mwArray mw_pkt = ncsPktToMatlabPkt(ncsPkt);
 
     ncs_doHandlePacket(1, mw_ncsPktList, ncsHandle, mw_timestamp, mw_pkt);
 
+    // return potentially created response pkts
     std::vector<NcsContext::NcsPkt> result;
 
     parseMatlabPktList(mw_ncsPktList, result);

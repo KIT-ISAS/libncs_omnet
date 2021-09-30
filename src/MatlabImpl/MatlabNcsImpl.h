@@ -52,9 +52,15 @@ class MatlabNcsImpl: virtual public AbstractNcsImpl, public MatlabInitializer, p
 
   protected:
 
+    struct RcvdPktEvt {
+        simtime_t sent;
+        simsignal_t signal;
+    };
+
     NcsContext * context;
     const NcsContext::NcsParameters * parameters;
     const NcsContext::NcsSignals * signals;
+    std::vector<RcvdPktEvt> pktEvts;
 
     /**
      * The interval between two consecutive plant computation steps;
